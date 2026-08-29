@@ -80,6 +80,21 @@ html, body {
 }
 .btn-primary:hover { background: var(--accent-dark); }
 .btn-ghost { background: transparent; border-color: transparent; color: var(--muted); }
+.btn-small { width: auto; padding: 6px 13px; font-size: 13px; margin-bottom: 0; flex-shrink: 0; }
+.btn-leave {
+  background: transparent;
+  border-color: color-mix(in srgb, var(--danger) 45%, transparent);
+  color: var(--danger);
+}
+.btn-leave:hover { background: color-mix(in srgb, var(--danger) 10%, transparent); }
+
+.panel-header-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+.panel-header-row h2 { margin: 0; }
 
 .divider {
   text-align: center;
@@ -198,20 +213,31 @@ html, body {
 .game-meta-row {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 6px;
   margin-bottom: 20px;
 }
 .game-meta {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 6px;
   font-weight: 700;
   background: linear-gradient(180deg, rgba(224,177,58,0.28), rgba(224,177,58,0.08));
   border: 1px solid rgba(224,177,58,0.4);
   border-radius: 999px;
-  padding: 7px 8px 7px 16px;
+  padding: 7px 8px 7px 12px;
   box-shadow: 0 2px 8px rgba(0,0,0,0.25), inset 0 1px 0 rgba(255,255,255,0.15);
   width: fit-content;
+  min-width: 0;
+  overflow-x: auto;
+  flex-shrink: 1;
+}
+.game-meta > * { flex-shrink: 0; white-space: nowrap; }
+.game-icon-btns {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+  margin-left: auto;
 }
 .mute-btn {
   background: rgba(0,0,0,0.22);
@@ -220,13 +246,15 @@ html, body {
   font-size: 13px;
   cursor: pointer;
   border-radius: 999px;
-  padding: 7px 11px;
+  padding: 7px 9px;
   flex-shrink: 0;
 }
 .mute-btn:hover { background: rgba(0,0,0,0.34); }
+.mute-btn.leave-btn { border-color: rgba(224,90,74,0.55); }
+.mute-btn.leave-btn:hover { background: rgba(224,90,74,0.28); }
 .badge {
   font-size: 12px;
-  padding: 3px 10px;
+  padding: 3px 8px;
   border-radius: 999px;
   border: 1px solid rgba(255,255,255,0.4);
 }
@@ -523,6 +551,7 @@ html, body {
 .hand-controls .btn { margin-bottom: 0; width: auto; flex: 1; }
 
 .hand-cards {
+  --hand-card-scale: 1;
   display: flex;
   justify-content: flex-start;
   overflow-x: auto;
@@ -532,13 +561,30 @@ html, body {
   background: linear-gradient(180deg, transparent 0%, transparent 30%, color-mix(in srgb, #6b4426 55%, transparent) 55%, #3c2415 100%);
   border-radius: 0 0 10px 10px;
 }
+/* 手札は枚数が多いときスクロールさせず、カード自体を縮小して1画面に全部収める
+   (js側の layoutHandOverlap が枚数と横幅から --hand-card-scale を計算してセットする) */
 .hand-cards .playing-card {
   cursor: pointer;
-  transition: transform 0.12s ease, box-shadow 0.12s ease, filter 0.12s ease;
+  transition: transform 0.12s ease, box-shadow 0.12s ease, filter 0.12s ease, width 0.12s ease, height 0.12s ease;
   margin-left: 0;
+  width: calc(88px * var(--hand-card-scale, 1));
+  height: calc(124px * var(--hand-card-scale, 1));
+  font-size: calc(26px * var(--hand-card-scale, 1));
+  border-radius: calc(10px * var(--hand-card-scale, 1));
 }
 .hand-cards .playing-card {
   --lift: 0px;
+}
+.hand-cards .playing-card .suit { font-size: calc(34px * var(--hand-card-scale, 1)); }
+.hand-cards .playing-card .corner {
+  font-size: calc(13px * var(--hand-card-scale, 1));
+  top: calc(6px * var(--hand-card-scale, 1));
+  left: calc(8px * var(--hand-card-scale, 1));
+}
+.hand-cards .playing-card.has-art .corner {
+  padding: calc(2px * var(--hand-card-scale, 1)) calc(5px * var(--hand-card-scale, 1)) calc(3px * var(--hand-card-scale, 1));
+  top: calc(4px * var(--hand-card-scale, 1));
+  left: calc(4px * var(--hand-card-scale, 1));
 }
 .hand-cards .playing-card:hover,
 .hand-cards .playing-card:focus-visible {

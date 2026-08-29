@@ -187,6 +187,17 @@ async function main() {
     });
     ok(`手札: ${handRanks.join(',')}`);
 
+    // 手札が横スクロール無しで1画面に収まっているか(スライドしないと分からない状態になっていないか)を確認
+    const handFit = await page.evaluate(() => {
+      const hc = document.getElementById('hand-cards');
+      return { scrollWidth: hc.scrollWidth, clientWidth: hc.clientWidth };
+    });
+    if (handFit.scrollWidth > handFit.clientWidth + 2) {
+      fail(`手札が横スクロールしないと全部見えない状態になっている (scrollWidth=${handFit.scrollWidth} > clientWidth=${handFit.clientWidth})`);
+    } else {
+      ok('手札は横スクロール無しで全部画面に収まっている');
+    }
+
     // 1枚目を選択 -> selectedクラスの確認 + 見た目のスクリーンショット(リフト演出が無いことを目視)
     // 手札は扇状に重なっているため実座標クリックだと隣のカードに奪われることがある。
     // 実際のクリックハンドラを直接叩いて選択を再現する。
@@ -459,6 +470,35 @@ async function main() {
 
   await page.waitForTimeout(300);
   await page.screenshot({ path: `${OUT}/04_final_state.png`, fullPage: true });
+
+  // ルーム退出ボタン: キャンセルでは何も起きず、OKでセッションが消えてホーム画面に戻ることを確認
+  // (ゲーム画面からの離脱を伴う破壊的な検証なので、他のチェックが全部終わった最後に行う)
+  {
+    const sessionBefore = await page.evaluate(() => localStorage.getItem('daifugo-session'));
+    if (!sessionBefore) fail('退出チェック開始前にセッションが保存されていない');
+
+    page.once('dialog', (d) => d.dismiss());
+    await page.click('#btn-leave-game');
+    await page.waitForTimeout(200);
+    const stillInGame = await page.evaluate(() => !document.getElementById('screen-game').hidden);
+    const sessionAfterCancel = await page.evaluate(() => localStorage.getItem('daifugo-session'));
+    if (!stillInGame || !sessionAfterCancel) {
+      fail(`退出ボタンをキャンセルしたのにゲーム画面/セッションが変化した (stillInGame=${stillInGame}, session=${!!sessionAfterCancel})`);
+    } else {
+      ok('退出ボタン: キャンセルするとゲーム画面のまま・セッションも保持される');
+    }
+
+    page.once('dialog', (d) => d.accept());
+    await page.click('#btn-leave-game');
+    await page.waitForTimeout(500);
+    const onHome = await page.evaluate(() => !document.getElementById('screen-home').hidden);
+    const sessionAfterOk = await page.evaluate(() => localStorage.getItem('daifugo-session'));
+    if (!onHome || sessionAfterOk) {
+      fail(`退出ボタンでOKしたのにホーム画面に戻らない/セッションが残っている (onHome=${onHome}, session=${!!sessionAfterOk})`);
+    } else {
+      ok('退出ボタン: OKするとホーム画面に戻り、セッションも消える');
+    }
+  }
 
   // youtube iframe API 等の外部リソース読み込み失敗はサンドボックス環境のネットワーク制限によるもので
   // アプリのバグではないため、それ以外の予期しないJSエラーだけをチェックする

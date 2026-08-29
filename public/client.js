@@ -1,6 +1,14 @@
 (() => {
   'use strict';
 
+  // ブラウザから「アプリとしてインストール」できるようにするための登録
+  // (対応ブラウザでのみ動作。未対応でも通常のWebサイトとして問題なく使える)
+  if ('serviceWorker' in navigator) {
+    window.addEventListener('load', () => {
+      navigator.serviceWorker.register('/service-worker.js').catch(() => {});
+    });
+  }
+
   const socket = io();
 
   const el = (id) => document.getElementById(id);
@@ -96,6 +104,15 @@
   }
   function clearSession() {
     try { localStorage.removeItem(STORAGE_KEY); } catch (e) {}
+  }
+
+  // ルーム退出: 保存中のセッションを消してからページを再読み込みする。
+  // (BGM再生やソケット接続などの状態を全部きれいにリセットしたいので、
+  //  画面遷移だけで済ませず素直にリロードする)
+  function leaveRoom() {
+    if (!confirm('ルームを退出しますか?')) return;
+    clearSession();
+    location.reload();
   }
 
   let myPlayerId = null;
@@ -336,6 +353,8 @@
   // ------------------------------------------------------------------
   // ロビー画面
   // ------------------------------------------------------------------
+  el('btn-leave-lobby').addEventListener('click', leaveRoom);
+
   el('btn-start').addEventListener('click', () => {
     socket.emit('room:start', {}, (res) => {
       if (!res.ok) el('lobby-error').textContent = res.error;
@@ -584,20 +603,47 @@
   }
 
   // 手札全体がスライドせず1画面に収まるよう、枚数と幅から重なり幅を動的に計算する
+  // 手札全体がスライドせず1画面に収まるよう、枚数と横幅から
+  // (1) カード自体の縮小率(--hand-card-scale) と (2) 重なり幅 を動的に計算する。
+  // どんなに枚数が多くても、隣のカードに隠れる部分は最大 maxOverlapRatio までに抑えるので
+  // 左上の角(ランク/マーク)は常に見える状態を保ったまま、横スクロール無しで全部見えるようにする。
   function layoutHandOverlap(container, nodes) {
     const n = nodes.length;
+    if (n === 0) return;
+    // まず等倍でカード本来の幅を測るためにリセット
+    container.style.setProperty('--hand-card-scale', '1');
+    nodes.forEach((node) => { node.style.marginLeft = '0px'; });
     if (n <= 1) return;
     const cs = getComputedStyle(container);
     const padding = (parseFloat(cs.paddingLeft) || 0) + (parseFloat(cs.paddingRight) || 0);
     const containerWidth = container.clientWidth - padding;
-    const cardWidth = nodes[0].offsetWidth;
+    const baseCardWidth = nodes[0].offsetWidth;
+    const maxOverlapRatio = 0.74; // 重ねても角のランク/マークだけは必ず見える範囲
+    const minScale = 0.42; // これ以上は読めなくなるので縮小しない
+    const denom = 1 + (n - 1) * (1 - maxOverlapRatio);
+    let scale = containerWidth / (baseCardWidth * denom);
+    scale = Math.max(minScale, Math.min(1, scale));
+    container.style.setProperty('--hand-card-scale', String(scale));
+    const cardWidth = baseCardWidth * scale;
     const naturalTotal = cardWidth * n;
-    if (naturalTotal <= containerWidth) return;
-    let overlap = (naturalTotal - containerWidth) / (n - 1);
-    overlap = Math.min(overlap, cardWidth * 0.75);
+    let overlap = 0;
+    if (naturalTotal > containerWidth) {
+      overlap = (naturalTotal - containerWidth) / (n - 1);
+      overlap = Math.min(overlap, cardWidth * maxOverlapRatio);
+    }
     nodes.forEach((node, i) => {
       if (i > 0) node.style.marginLeft = `-${overlap}px`;
     });
+    // 計算上は収まるはずでも、丸め誤差などで実際にはまだ僅かにはみ出すことがあるため、
+    // 実測(scrollWidth)して残っていたら重なりを少しだけ追加で補正する。
+    const overflow = container.scrollWidth - container.clientWidth;
+    if (overflow > 0.5) {
+      const extra = overflow / (n - 1) + 0.5;
+      overlap = Math.min(overlap + extra, cardWidth * 0.92);
+      nodes.forEach((node, i) => {
+        if (i > 0) node.style.marginLeft = `-${overlap}px`;
+      });
+    }
   }
 
   function renderHand(state) {
@@ -869,6 +915,8 @@
     AudioFX.setMuted(!AudioFX.isMuted());
     el('btn-mute').textContent = AudioFX.isMuted() ? '🔇' : '🔊';
   });
+
+  el('btn-leave-game').addEventListener('click', leaveRoom);
 
   // ------------------------------------------------------------------
   // BGM (YouTube Music 風のミニプレイヤー) - ゲーム中に裏で音楽を流す
