@@ -60,7 +60,10 @@
 <!-- ロビー画面 -->
 <section id="screen-lobby" class="screen" hidden>
   <div class="card-panel">
-    <h2>ルームコード</h2>
+    <div class="panel-header-row">
+      <h2>ルームコード</h2>
+      <button id="btn-leave-lobby" type="button" class="btn btn-small btn-leave">🚪 退出</button>
+    </div>
     <div class="room-code" id="lobby-roomcode">----</div>
     <p class="sub">このコードを友達に共有してください</p>
 
@@ -86,7 +89,10 @@
         <span id="meta-shibari" class="badge badge-off">しばり</span>
         <span id="meta-eleven" class="badge badge-off">11バック</span>
       </div>
-      <button id="btn-mute" class="mute-btn" title="効果音のON/OFF">🔊</button>
+      <div class="game-icon-btns">
+        <button id="btn-mute" class="mute-btn" title="効果音のON/OFF">🔊</button>
+        <button id="btn-leave-game" class="mute-btn leave-btn" title="ルームから退出">🚪</button>
+      </div>
     </div>
     <div id="opponents" class="opponents"></div>
   </div>
