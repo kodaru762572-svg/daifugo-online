@@ -1,0 +1,193 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1" />
+<title>大富豪オンライン</title>
+<link rel="stylesheet" href="style.css" />
+</head>
+<body>
+
+<div id="toast" class="toast" hidden></div>
+
+<!-- ホーム画面 -->
+<section id="screen-home" class="screen">
+  <div class="card-panel home-panel">
+    <h1>♠ 大富豪オンライン ♦</h1>
+    <p class="sub">友達とリアルタイムで大富豪を遊ぼう</p>
+
+    <label class="field">
+      <span>ニックネーム</span>
+      <input id="input-name" type="text" maxlength="16" placeholder="例: せな" />
+    </label>
+
+    <span class="field-label">アイコン画像(任意)</span>
+    <div class="avatar-picker">
+      <div class="avatar-preview" id="avatar-preview">?</div>
+      <div class="avatar-btns">
+        <button type="button" id="btn-avatar-pick" class="btn">画像を選ぶ</button>
+        <button type="button" id="btn-avatar-clear" class="btn btn-ghost" hidden>画像を削除</button>
+      </div>
+      <input id="input-avatar" type="file" accept="image/*" />
+    </div>
+
+    <span class="field-label">ルール設定(ホストが選べます)</span>
+    <div class="rule-list" id="rule-list">
+      <label class="rule-row"><input type="checkbox" data-rule="eightCut" checked><span><b>8切り</b><small>8を出すと場が流れ、続けて出せる</small></span></label>
+      <label class="rule-row"><input type="checkbox" data-rule="revolution" checked><span><b>革命</b><small>同ランク4枚以上で強さが逆転</small></span></label>
+      <label class="rule-row"><input type="checkbox" data-rule="shibari" checked><span><b>しばり</b><small>同じスートが2回続くとスート縛り</small></span></label>
+      <label class="rule-row"><input type="checkbox" data-rule="useJoker" checked><span><b>ジョーカーを使う</b><small>最強の1枚。スペ3返しもこれに連動</small></span></label>
+      <label class="rule-row"><input type="checkbox" data-rule="spade3Return" checked><span><b>スペ3返し</b><small>ジョーカー単騎をスペードの3で返せる</small></span></label>
+      <label class="rule-row"><input type="checkbox" data-rule="cardExchange" checked><span><b>カード交換</b><small>次ラウンドで大富豪⇔大貧民などが交換</small></span></label>
+      <label class="rule-row"><input type="checkbox" data-rule="sevenGive" checked><span><b>7渡し</b><small>7を出した枚数分、好きな相手にカードを渡せる</small></span></label>
+      <label class="rule-row"><input type="checkbox" data-rule="elevenBack" checked><span><b>イレブンバック</b><small>Jを出すとそのトリック限定で強さが逆転</small></span></label>
+    </div>
+
+    <button id="btn-create" class="btn btn-primary">新しいルームを作る</button>
+
+    <div class="divider">または</div>
+
+    <label class="field">
+      <span>ルームコード</span>
+      <input id="input-roomcode" type="text" maxlength="4" placeholder="例: A1B2" style="text-transform:uppercase" />
+    </label>
+    <button id="btn-join" class="btn">ルームに参加する</button>
+
+    <p class="error" id="home-error"></p>
+  </div>
+</section>
+
+<!-- ロビー画面 -->
+<section id="screen-lobby" class="screen" hidden>
+  <div class="card-panel">
+    <h2>ルームコード</h2>
+    <div class="room-code" id="lobby-roomcode">----</div>
+    <p class="sub">このコードを友達に共有してください</p>
+
+    <h3>参加プレイヤー</h3>
+    <ul id="lobby-players" class="player-list"></ul>
+
+    <h3>ルール</h3>
+    <div id="lobby-rules" class="rule-summary"></div>
+
+    <button id="btn-start" class="btn btn-primary" hidden>ゲーム開始</button>
+    <p class="sub" id="lobby-wait-msg">ホストの開始を待っています…</p>
+    <p class="error" id="lobby-error"></p>
+  </div>
+</section>
+
+<!-- ゲーム画面 -->
+<section id="screen-game" class="screen" hidden>
+  <div class="game-top">
+    <div class="game-meta-row">
+      <div class="game-meta">
+        <span id="meta-round">ラウンド 1</span>
+        <span id="meta-revolution" class="badge badge-off">革命</span>
+        <span id="meta-shibari" class="badge badge-off">しばり</span>
+        <span id="meta-eleven" class="badge badge-off">11バック</span>
+      </div>
+      <button id="btn-mute" class="mute-btn" title="効果音のON/OFF">🔊</button>
+    </div>
+    <div id="opponents" class="opponents"></div>
+  </div>
+
+  <div class="field-area" id="field-area">
+    <div id="field-cards" class="field-cards"></div>
+    <div id="field-empty" class="field-empty">場は空です。好きなカードを出してください</div>
+  </div>
+
+  <div id="exchange-panel" class="exchange-panel" hidden>
+    <h3>カード交換</h3>
+    <p id="exchange-desc"></p>
+    <button id="btn-exchange-submit" class="btn btn-primary" disabled>選んだカードを渡す</button>
+  </div>
+
+  <div id="sevengive-panel" class="exchange-panel" hidden>
+    <h3>7渡し</h3>
+    <p id="sevengive-desc"></p>
+    <div id="sevengive-candidates" class="candidate-list"></div>
+    <button id="btn-sevengive-submit" class="btn btn-primary" disabled>渡す</button>
+  </div>
+  <div id="sevengive-wait" class="exchange-panel" hidden>
+    <p id="sevengive-wait-desc"></p>
+  </div>
+
+  <div class="hand-area">
+    <div class="self-badge">
+      <div class="avatar" id="self-avatar">?</div>
+      <div class="name" id="self-name">あなた</div>
+    </div>
+    <div class="hand-controls">
+      <button id="btn-pass" class="btn">パス</button>
+      <button id="btn-play" class="btn btn-primary">出す</button>
+      <button id="btn-sticker-toggle" class="btn btn-ghost">😊</button>
+      <button id="btn-log-toggle" class="btn btn-ghost">ログ</button>
+      <button id="btn-bgm-toggle" class="btn btn-ghost">🎵 BGM</button>
+    </div>
+    <div id="hand-cards" class="hand-cards"></div>
+  </div>
+
+  <div id="sticker-panel" class="sticker-panel" hidden></div>
+
+  <div id="log-panel" class="log-panel" hidden>
+    <div id="log-list"></div>
+  </div>
+
+  <div id="bgm-panel" class="bgm-panel" hidden>
+    <div class="bgm-add-row">
+      <input id="bgm-url" type="text" placeholder="YouTubeのURLを貼り付け" />
+      <button id="bgm-add" class="bgm-add-btn">追加</button>
+    </div>
+    <div class="bgm-nowplaying">
+      <img id="bgm-thumb" class="bgm-thumb" alt="" hidden />
+      <div class="bgm-thumb bgm-thumb-empty" id="bgm-thumb-empty">🎵</div>
+      <div class="bgm-meta">
+        <div class="bgm-title" id="bgm-title">再生中の曲はありません</div>
+        <div class="bgm-channel" id="bgm-channel"></div>
+      </div>
+    </div>
+    <div class="bgm-progress-row">
+      <span class="bgm-time" id="bgm-time-current">0:00</span>
+      <div class="bgm-progress-track" id="bgm-progress-track">
+        <div class="bgm-progress-fill" id="bgm-progress-fill"></div>
+      </div>
+      <span class="bgm-time" id="bgm-time-duration">0:00</span>
+    </div>
+    <div class="bgm-controls-row">
+      <button id="bgm-repeat" class="bgm-ctrl-btn active" title="リピート: 全曲">🔁</button>
+      <button id="bgm-prev" class="bgm-ctrl-btn" title="前の曲">⏮</button>
+      <button id="bgm-playpause" class="bgm-ctrl-btn bgm-play" title="再生/一時停止">▶</button>
+      <button id="bgm-next" class="bgm-ctrl-btn" title="次の曲">⏭</button>
+      <span class="bgm-vol-icon">🔈</span>
+      <input id="bgm-volume" class="bgm-volume" type="range" min="0" max="100" value="60" />
+    </div>
+    <div class="bgm-queue" id="bgm-queue"></div>
+    <p class="bgm-note" id="bgm-note"></p>
+  </div>
+</section>
+
+<!-- ラウンド終了モーダル -->
+<div id="modal-roundend" class="modal" hidden>
+  <div class="modal-box">
+    <h2>ラウンド結果</h2>
+    <ol id="roundend-list" class="roundend-list"></ol>
+    <button id="btn-next-round" class="btn btn-primary" hidden>次のラウンドへ</button>
+    <p class="sub" id="roundend-wait">ホストが次のラウンドを開始するのを待っています…</p>
+  </div>
+</div>
+
+<div id="sticker-layer" class="sticker-layer"></div>
+
+<div id="fx-flash" class="fx-flash" hidden></div>
+<div id="fx-banner-wrap" class="fx-banner-wrap" hidden>
+  <div id="fx-banner" class="fx-banner"></div>
+</div>
+
+<!-- BGM用の非表示YouTubeプレイヤー (音声のみ利用、画面には出さない) -->
+<div id="yt-bgm-player" style="position:absolute; width:1px; height:1px; opacity:0; pointer-events:none; overflow:hidden;"></div>
+
+<script src="/vendor/socket.io.min.js"></script>
+<script src="client.js"></script>
+<script src="https://www.youtube.com/iframe_api"></script>
+</body>
+</html>
