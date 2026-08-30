@@ -687,7 +687,17 @@
     const maxOverlapRatio = 0.58;
     const minScale = 0.42; // これ以上は読めなくなるので縮小しない
 
-    function overlapForScale(s) {
+    // 注意: 両端寄りのカードには fanTransform() による最大16度の rotate() が手前で
+    // 適用されている。回転は幅の計算(flexレイアウト)そのものには影響しないが、
+    // bottom center を軸に回転するため、カード上端が横方向に
+    // cardHeight * sin(16°) 分だけ外側にはみ出す。ブラウザによってはこれも
+    // scrollWidth に反映されるため、先に「はみ出す分の余白」を計算に織り込んでおく
+    // (実測値を見て後追いで縮め続けると、回転分のはみ出しがなかなかゼロにならず
+    // 際限なく縮小し続けてしまうバグになるため、実測ループには頼らない)。
+    const cardAspect = 124 / 88; // .playing-card の height / width
+    const rotationMarginRatio = Math.sin((16 * Math.PI) / 180) * cardAspect; // ≈0.389 (cardWidthに対する比率)
+
+    function widthForScale(s) {
       const cardWidth = baseCardWidth * s;
       const naturalTotal = cardWidth * n;
       let overlap = 0;
@@ -695,38 +705,36 @@
         overlap = (naturalTotal - containerWidth) / (n - 1);
         overlap = Math.min(overlap, cardWidth * maxOverlapRatio);
       }
-      return { cardWidth, overlap };
+      const totalWidth = cardWidth * (1 + rotationMarginRatio) + (n - 1) * (cardWidth - overlap);
+      return { cardWidth, overlap, totalWidth };
     }
-    function applyLayout(s, overlap) {
-      container.style.setProperty('--hand-card-scale', String(s));
+
+    const denom = 1 + rotationMarginRatio + (n - 1) * (1 - maxOverlapRatio);
+    let scale = containerWidth / (baseCardWidth * denom);
+    scale = Math.max(minScale, Math.min(1, scale));
+    let { cardWidth, overlap, totalWidth } = widthForScale(scale);
+
+    // 上限の重なり率のままでは計算上まだ収まらない(=縮小率が下限に近い)場合のみ、
+    // 重なりを増やす前にカード自体をもう少し縮める(角のランク/マークを優先して残す)
+    let guard = 0;
+    while (totalWidth > containerWidth + 0.5 && scale > minScale && guard++ < 12) {
+      scale = Math.max(minScale, scale - 0.02);
+      ({ cardWidth, overlap, totalWidth } = widthForScale(scale));
+    }
+
+    container.style.setProperty('--hand-card-scale', String(scale));
+    nodes.forEach((node, i) => {
+      if (i > 0) node.style.marginLeft = `-${overlap}px`;
+    });
+
+    // 最小縮小率まで来てもなお計算上収まらない(極端に枚数が多い場合)は、
+    // スクロールさせない方を優先し、最後の手段として重なりを追加する。
+    if (totalWidth > containerWidth + 0.5) {
+      const extra = (totalWidth - containerWidth) / (n - 1) + 0.5;
+      overlap = Math.min(overlap + extra, cardWidth * 0.92);
       nodes.forEach((node, i) => {
         if (i > 0) node.style.marginLeft = `-${overlap}px`;
       });
-    }
-
-    const denom = 1 + (n - 1) * (1 - maxOverlapRatio);
-    let scale = containerWidth / (baseCardWidth * denom);
-    scale = Math.max(minScale, Math.min(1, scale));
-    let { cardWidth, overlap } = overlapForScale(scale);
-    applyLayout(scale, overlap);
-
-    // 計算上は収まるはずでも、丸め誤差などで実際にはまだ僅かにはみ出すことがある。
-    // その場合、重なりを増やす(=角が隠れる)のではなく、まずカード自体をさらに縮める
-    // ことで対処し、角のランク/マークが見える範囲を可能な限り保つ。
-    let guard = 0;
-    while (container.scrollWidth - container.clientWidth > 0.5 && scale > minScale && guard++ < 12) {
-      scale = Math.max(minScale, scale - 0.03);
-      ({ cardWidth, overlap } = overlapForScale(scale));
-      applyLayout(scale, overlap);
-    }
-
-    // 最小縮小率まで来てもなお僅かに収まらない(極端に枚数が多い場合)は、
-    // スクロールさせない方を優先し、最後の手段として重なりを追加する。
-    const overflow = container.scrollWidth - container.clientWidth;
-    if (overflow > 0.5) {
-      const extra = overflow / (n - 1) + 0.5;
-      overlap = Math.min(overlap + extra, cardWidth * 0.92);
-      applyLayout(scale, overlap);
     }
   }
 
