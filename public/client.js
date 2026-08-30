@@ -30,6 +30,16 @@
     toast._timer = setTimeout(() => (t.hidden = true), 2600);
   }
 
+  // ルーム解散/キックでリロードされた直後なら、その旨を一言表示する
+  try {
+    const leaveNotice = sessionStorage.getItem('daifugo-leave-notice');
+    if (leaveNotice) {
+      sessionStorage.removeItem('daifugo-leave-notice');
+      const msg = leaveNotice === 'kicked' ? 'ホストによってルームからキックされました' : 'ルームが解散されました';
+      window.addEventListener('load', () => setTimeout(() => toast(msg), 300));
+    }
+  } catch (e) {}
+
   const SUIT_SYMBOL = { S: '♠', H: '♥', D: '♦', C: '♣' };
 
   // ------------------------------------------------------------------
@@ -355,6 +365,29 @@
   // ------------------------------------------------------------------
   el('btn-leave-lobby').addEventListener('click', leaveRoom);
 
+  el('btn-disband-lobby').addEventListener('click', () => {
+    if (!confirm('ルームを解散しますか?(参加者全員がルームから退出します)')) return;
+    socket.emit('room:disband', {}, (res) => {
+      if (res && !res.ok) el('lobby-error').textContent = res.error;
+      // 成功時は自分にも room:disbanded が届き、そちらでホーム画面に戻す処理をする
+    });
+  });
+
+  // ホストがルームを解散したときに全員(ホスト自身も含む)呼ばれる。
+  // BGM再生中やタイマーなど諸々の状態をきれいにリセットしたいので、退出時と同様にリロードする。
+  socket.on('room:disbanded', () => {
+    try { sessionStorage.setItem('daifugo-leave-notice', 'disband'); } catch (e) {}
+    clearSession();
+    location.reload();
+  });
+
+  // ホストにキックされたときに呼ばれる (自分だけ)。同様にリロードして状態をリセットする。
+  socket.on('room:kicked', () => {
+    try { sessionStorage.setItem('daifugo-leave-notice', 'kicked'); } catch (e) {}
+    clearSession();
+    location.reload();
+  });
+
   el('btn-start').addEventListener('click', () => {
     socket.emit('room:start', {}, (res) => {
       if (!res.ok) el('lobby-error').textContent = res.error;
@@ -365,6 +398,7 @@
     if (state.started) return; // ゲーム中はロビーUIを更新しない
     showScreen('lobby');
     el('lobby-roomcode').textContent = state.code;
+    const isHost = state.hostId === myPlayerId;
     const list = el('lobby-players');
     list.innerHTML = '';
     state.players.forEach((p) => {
@@ -392,12 +426,25 @@
         tag.className = 'host-tag';
         tag.textContent = 'ホスト';
         li.appendChild(tag);
+      } else if (isHost) {
+        const kickBtn = document.createElement('button');
+        kickBtn.type = 'button';
+        kickBtn.className = 'kick-btn';
+        kickBtn.textContent = 'キック';
+        kickBtn.title = `${p.name} をキックする`;
+        kickBtn.addEventListener('click', () => {
+          if (!confirm(`${p.name} をキックしますか?`)) return;
+          socket.emit('room:kick', { targetId: p.id }, (res) => {
+            if (res && !res.ok) el('lobby-error').textContent = res.error;
+          });
+        });
+        li.appendChild(kickBtn);
       }
       list.appendChild(li);
     });
-    const isHost = state.hostId === myPlayerId;
     el('btn-start').hidden = !isHost;
     el('btn-start').disabled = state.players.length < 2;
+    el('btn-disband-lobby').hidden = !isHost;
     el('lobby-wait-msg').hidden = isHost;
 
     const rulesBox = el('lobby-rules');
@@ -456,6 +503,7 @@
   function renderOpponents(state) {
     const container = el('opponents');
     container.innerHTML = '';
+    const isHost = lastRoomHostId === myPlayerId;
     state.players
       .filter((p) => p.id !== myPlayerId)
       .forEach((p) => {
@@ -473,6 +521,21 @@
           <div class="name">${escapeHtml(p.name)}</div>
           ${p.role ? `<div class="role">${p.role}</div>` : ''}
         `;
+        if (isHost && p.connected) {
+          const kickBtn = document.createElement('button');
+          kickBtn.type = 'button';
+          kickBtn.className = 'kick-btn kick-btn-opponent';
+          kickBtn.textContent = 'キック';
+          kickBtn.title = `${p.name} をキックする`;
+          kickBtn.addEventListener('click', (ev) => {
+            ev.stopPropagation();
+            if (!confirm(`${p.name} をキックしますか?`)) return;
+            socket.emit('room:kick', { targetId: p.id }, (res) => {
+              if (res && !res.ok) toast(res.error);
+            });
+          });
+          div.appendChild(kickBtn);
+        }
         container.appendChild(div);
       });
   }
@@ -769,6 +832,27 @@
     el('btn-pass').disabled = !myTurn || iAmFinished || !state.field;
   }
 
+  // 手番の残り時間バッジ (毎秒更新。0秒になったら次のgame:stateが来るまで0のまま表示)
+  let turnTimerInterval = null;
+  function renderTurnTimer(state) {
+    const badge = el('meta-turn-timer');
+    if (!badge) return;
+    if (turnTimerInterval) { clearInterval(turnTimerInterval); turnTimerInterval = null; }
+    if (state.phase !== 'PLAYING' || !state.turnDeadline) {
+      badge.hidden = true;
+      return;
+    }
+    badge.hidden = false;
+    const update = () => {
+      const remain = Math.max(0, Math.ceil((state.turnDeadline - Date.now()) / 1000));
+      badge.textContent = `⏱ ${remain}`;
+      badge.classList.toggle('badge-timer-warn', remain <= 10);
+      if (remain <= 0 && turnTimerInterval) { clearInterval(turnTimerInterval); turnTimerInterval = null; }
+    };
+    update();
+    turnTimerInterval = setInterval(update, 250);
+  }
+
   function renderMeta(state) {
     el('meta-round').textContent = `ラウンド ${state.round}`;
     const rev = el('meta-revolution');
@@ -870,6 +954,7 @@
       showScreen('game');
     triggerEffects(state);
     renderMeta(state);
+    renderTurnTimer(state);
     renderSelfBadge(state);
     renderOpponents(state);
     renderField(state);

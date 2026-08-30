@@ -99,6 +99,10 @@ class RoomManager {
     room.game = new DaifugoGame(room.players.map((p) => ({ id: p.id, name: p.name, avatar: p.avatar })), room.rules);
     return room.game.startRound();
   }
+
+  removeRoom(code) {
+    this.rooms.delete((code || '').toUpperCase());
+  }
 }
 
 module.exports = { RoomManager };

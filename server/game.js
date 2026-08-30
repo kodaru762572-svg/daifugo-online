@@ -595,6 +595,7 @@ class DaifugoGame {
           }
         : null,
       currentTurnPlayerId: this.order[this.turnIndex],
+      turnDeadline: this.turnDeadline || null,
       leaderId: this.leaderId,
       finishedOrder: this.finished.map((id) => ({ id, name: this.playerName(id), role: roles[id] || null })),
       passed: Array.from(this.passed),

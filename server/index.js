@@ -30,6 +30,80 @@ const STICKER_IDS = new Set([
 ]);
 const STICKER_COOLDOWN_MS = 1000;
 
+// ----------------------------------------------------------------
+// 手番の時間制限 (60秒操作が無ければ自動でパス/1枚プレイして進行する)
+// ----------------------------------------------------------------
+const TURN_TIME_LIMIT_MS = 60 * 1000;
+const roomTurnTimers = new Map(); // roomCode -> Timeout
+
+function clearRoomTurnTimer(code) {
+  const t = roomTurnTimers.get(code);
+  if (t) {
+    clearTimeout(t);
+    roomTurnTimers.delete(code);
+  }
+}
+
+// 今の手番のプレイヤーが操作不能(退席/切断)、あるいは時間切れの場合に代わりに
+// パス(場があるとき)/最初の1枚をプレイ(リード番のとき)して手番を進める。
+// 戻り値: 実際に何か操作を代行したか
+function autoResolveCurrentTurn(room, playerId) {
+  const game = room.game;
+  if (!game || game.phase !== 'PLAYING') return false;
+  if (game.order[game.turnIndex] !== playerId) return false;
+  if (game.finished.includes(playerId)) return false;
+  if (game.field) {
+    game.pass(playerId);
+  } else {
+    const hand = game.hands[playerId] || [];
+    if (hand.length === 0) return false;
+    game.playCards(playerId, [hand[0].id]);
+  }
+  return true;
+}
+
+// 退席/切断/キックされたプレイヤーがちょうど自分の手番のときは、次に誰かが操作するまで
+// 永遠に止まってしまうため、その場で自動的にスキップして進行させる(複数人連続でも対応)。
+function skipUnavailableTurns(room) {
+  const game = room.game;
+  if (!game || game.phase !== 'PLAYING') return;
+  let guard = 0;
+  while (guard++ < game.order.length + 2) {
+    const currentId = game.order[game.turnIndex];
+    if (!currentId || !game.disconnected.has(currentId)) break;
+    game.addLog(`${game.playerName(currentId)} は退席中のため自動的にスキップされました。`);
+    if (!autoResolveCurrentTurn(room, currentId)) break;
+    if (game.phase !== 'PLAYING') break;
+  }
+}
+
+function scheduleTurnTimer(room) {
+  clearRoomTurnTimer(room.code);
+  const game = room.game;
+  if (!game || game.phase !== 'PLAYING') {
+    if (game) game.turnDeadline = null;
+    return;
+  }
+  const currentId = game.order[game.turnIndex];
+  if (!currentId || game.finished.includes(currentId) || game.disconnected.has(currentId)) {
+    game.turnDeadline = null;
+    return;
+  }
+  game.turnDeadline = Date.now() + TURN_TIME_LIMIT_MS;
+  const timeout = setTimeout(() => {
+    // タイマー発火時点で状況が変わっていないかを再確認してから代行操作する
+    const freshRoom = manager.getRoom(room.code);
+    if (!freshRoom || !freshRoom.game) return;
+    const acted = autoResolveCurrentTurn(freshRoom, currentId);
+    if (acted) {
+      freshRoom.game.addLog(`${freshRoom.game.playerName(currentId)} は${TURN_TIME_LIMIT_MS / 1000}秒以内に操作しなかったため、自動的に進行しました。`);
+      broadcastGame(freshRoom);
+    }
+    scheduleTurnTimer(freshRoom);
+  }, TURN_TIME_LIMIT_MS);
+  roomTurnTimers.set(room.code, timeout);
+}
+
 function playerBySocket(socket) {
   return { roomCode: socket.data.roomCode, playerId: socket.data.playerId };
 }
@@ -104,8 +178,52 @@ io.on('connection', (socket) => {
 
     manager.startGame(room);
     cb && cb({ ok: true });
+    scheduleTurnTimer(room);
     broadcastLobby(room);
     broadcastGame(room);
+  });
+
+  socket.on('room:disband', (_, cb) => {
+    const { roomCode, playerId } = playerBySocket(socket);
+    const room = manager.getRoom(roomCode);
+    if (!room) return cb && cb({ ok: false, error: 'ルームがありません。' });
+    if (room.hostId !== playerId) return cb && cb({ ok: false, error: 'ホストのみ解散できます。' });
+
+    clearRoomTurnTimer(room.code);
+    io.to(room.code).emit('room:disbanded');
+    manager.removeRoom(room.code);
+    cb && cb({ ok: true });
+  });
+
+  socket.on('room:kick', ({ targetId }, cb) => {
+    const { roomCode, playerId } = playerBySocket(socket);
+    const room = manager.getRoom(roomCode);
+    if (!room) return cb && cb({ ok: false, error: 'ルームがありません。' });
+    if (room.hostId !== playerId) return cb && cb({ ok: false, error: 'ホストのみキックできます。' });
+    if (!targetId || targetId === playerId) return cb && cb({ ok: false, error: '自分自身はキックできません。' });
+    const target = room.players.find((p) => p.id === targetId);
+    if (!target) return cb && cb({ ok: false, error: '対象のプレイヤーが見つかりません。' });
+
+    if (room.game) {
+      room.game.disconnected.add(targetId);
+      room.game.addLog(`${room.game.playerName(targetId)} はホストによってキックされました。`);
+      skipUnavailableTurns(room);
+    }
+
+    room.players = room.players.filter((p) => p.id !== targetId);
+
+    if (target.socketId) {
+      io.to(target.socketId).emit('room:kicked');
+      const targetSocket = io.sockets.sockets.get(target.socketId);
+      if (targetSocket) targetSocket.leave(room.code);
+    }
+
+    cb && cb({ ok: true });
+    broadcastLobby(room);
+    if (room.game) {
+      scheduleTurnTimer(room);
+      broadcastGame(room);
+    }
   });
 
   socket.on('room:nextRound', (_, cb) => {
@@ -117,6 +235,7 @@ io.on('connection', (socket) => {
 
     room.game.startRound();
     cb && cb({ ok: true });
+    scheduleTurnTimer(room);
     broadcastGame(room);
   });
 
@@ -126,7 +245,10 @@ io.on('connection', (socket) => {
     if (!room || !room.game) return cb && cb({ ok: false, error: 'ゲームがありません。' });
     const result = room.game.playCards(playerId, cardIds || []);
     cb && cb(result);
-    if (result.ok) broadcastGame(room);
+    if (result.ok) {
+      scheduleTurnTimer(room);
+      broadcastGame(room);
+    }
   });
 
   socket.on('game:pass', (_, cb) => {
@@ -135,7 +257,10 @@ io.on('connection', (socket) => {
     if (!room || !room.game) return cb && cb({ ok: false, error: 'ゲームがありません。' });
     const result = room.game.pass(playerId);
     cb && cb(result);
-    if (result.ok) broadcastGame(room);
+    if (result.ok) {
+      scheduleTurnTimer(room);
+      broadcastGame(room);
+    }
   });
 
   socket.on('game:sticker', ({ stickerId }, cb) => {
@@ -163,7 +288,10 @@ io.on('connection', (socket) => {
     if (!room || !room.game) return cb && cb({ ok: false, error: 'ゲームがありません。' });
     const result = room.game.submitExchangeReturn(playerId, cardIds || []);
     cb && cb(result);
-    if (result.ok) broadcastGame(room);
+    if (result.ok) {
+      scheduleTurnTimer(room);
+      broadcastGame(room);
+    }
   });
 
   socket.on('game:sevenGive', ({ cardIds, toPlayerId }, cb) => {
@@ -172,7 +300,10 @@ io.on('connection', (socket) => {
     if (!room || !room.game) return cb && cb({ ok: false, error: 'ゲームがありません。' });
     const result = room.game.submitSevenGive(playerId, cardIds || [], toPlayerId);
     cb && cb(result);
-    if (result.ok) broadcastGame(room);
+    if (result.ok) {
+      scheduleTurnTimer(room);
+      broadcastGame(room);
+    }
   });
 
   socket.on('disconnect', () => {
@@ -186,9 +317,13 @@ io.on('connection', (socket) => {
     }
     if (room.game) {
       room.game.disconnected.add(playerId);
+      skipUnavailableTurns(room);
     }
     broadcastLobby(room);
-    if (room.game) broadcastGame(room);
+    if (room.game) {
+      scheduleTurnTimer(room);
+      broadcastGame(room);
+    }
     manager.removeEmptyRoomIfNeeded(room.code);
   });
 });

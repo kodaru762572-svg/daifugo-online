@@ -70,7 +70,10 @@
   <div class="card-panel">
     <div class="panel-header-row">
       <h2>ルームコード</h2>
-      <button id="btn-leave-lobby" type="button" class="btn btn-small btn-leave">🚪 退出</button>
+      <div class="panel-header-btns">
+        <button id="btn-disband-lobby" type="button" class="btn btn-small btn-leave" hidden>ルーム解散</button>
+        <button id="btn-leave-lobby" type="button" class="btn btn-small btn-leave">🚪 退出</button>
+      </div>
     </div>
     <div class="room-code" id="lobby-roomcode">----</div>
     <p class="sub">このコードを友達に共有してください</p>
@@ -96,6 +99,7 @@
         <span id="meta-revolution" class="badge badge-off">革命</span>
         <span id="meta-shibari" class="badge badge-off">しばり</span>
         <span id="meta-eleven" class="badge badge-off">11バック</span>
+        <span id="meta-turn-timer" class="badge badge-timer" hidden>⏱ 60</span>
       </div>
       <div class="game-icon-btns">
         <button id="btn-mute" class="mute-btn" title="効果音のON/OFF">🔊</button>
