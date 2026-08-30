@@ -548,16 +548,6 @@
     const ty = ((i * 37) % 11) - 5;
     return `rotate(${rotate}deg) translateY(${ty}px)`;
   }
-  // 手札を扇状に重ねて表示 (選択されていても場に飛んでいくような持ち上げはしない。
-  // 選択の見た目は枠の光り方(.selected の box-shadow)だけで表現する)
-  function fanTransform(i, n) {
-    const mid = (n - 1) / 2;
-    const offset = i - mid;
-    const rotate = Math.max(-16, Math.min(16, offset * 3.2));
-    const lift = Math.abs(offset) * 2.2;
-    return `rotate(${rotate}deg) translateY(${-lift}px)`;
-  }
-
   // 今の選択状態から、次にどのカードを追加選択できるか (枚数上限 / ランク一致) を計算する。
   // ジョーカーは同じランクの束の穴埋めとして常に選べる。
   function selectionConstraints(state, selectedSet) {
@@ -687,33 +677,23 @@
     const maxOverlapRatio = 0.58;
     const minScale = 0.5; // これ以上は読めなくなるので縮小しない(枚数が多いときに手札欄の下が余りすぎないよう、0.42から引き上げ)
 
-    // 注意: 両端寄りのカードには fanTransform() による最大16度の rotate() が手前で
-    // 適用されている。回転は幅の計算(flexレイアウト)そのものには影響しないが、
-    // bottom center を軸に回転するため、カード上端が横方向に
-    // cardHeight * sin(16°) 分だけ外側にはみ出す。ブラウザによってはこれも
-    // scrollWidth に反映されるため、先に「はみ出す分の余白」を計算に織り込んでおく
-    // (実測値を見て後追いで縮め続けると、回転分のはみ出しがなかなかゼロにならず
-    // 際限なく縮小し続けてしまうバグになるため、実測ループには頼らない)。
+    // 手札は回転させないので、幅の計算はシンプルにカードの並び幅だけで済む
+    // (以前は回転によるはみ出し分の補正が必要だったが、回転自体を廃止したため不要)。
     const cardAspect = 141 / 100; // .playing-card の height / width
-    const rotationMarginRatio = Math.sin((16 * Math.PI) / 180) * cardAspect; // ≈0.389 (cardWidthに対する比率)
 
     function widthForScale(s) {
       const cardWidth = baseCardWidth * s;
-      // 必要なoverlapの計算にも回転はみ出し分(cardWidth * rotationMarginRatio)を
-      // 含めておかないと、ここで算出したoverlapがわずかに足りず、totalWidthが
-      // containerWidthを超えてしまい、下の縮小ループが不必要に発動して
-      // カードが必要以上に小さくなってしまう(=手札の下に余白が余る原因になっていた)。
-      const naturalTotal = cardWidth * n + cardWidth * rotationMarginRatio;
+      const naturalTotal = cardWidth * n;
       let overlap = 0;
       if (naturalTotal > containerWidth) {
         overlap = (naturalTotal - containerWidth) / (n - 1);
         overlap = Math.min(overlap, cardWidth * maxOverlapRatio);
       }
-      const totalWidth = cardWidth * (1 + rotationMarginRatio) + (n - 1) * (cardWidth - overlap);
+      const totalWidth = cardWidth + (n - 1) * (cardWidth - overlap);
       return { cardWidth, overlap, totalWidth };
     }
 
-    const denom = 1 + rotationMarginRatio + (n - 1) * (1 - maxOverlapRatio);
+    const denom = 1 + (n - 1) * (1 - maxOverlapRatio);
     let scale = containerWidth / (baseCardWidth * denom);
     scale = Math.max(minScale, Math.min(1, scale));
     let { cardWidth, overlap, totalWidth } = widthForScale(scale);
@@ -758,9 +738,27 @@
     container.style.minHeight = `${Math.round(padTop + cardHeight + padBottom)}px`;
   }
 
+  // カードの並び(枚数・順序)が前回と同じ場合に使い回すためのキャッシュ。
+  // 選択操作のたびに手札のDOMを全部作り直すと、レイアウト計算が
+  // (等倍にリセット→再計算) の順で走る関係で手札全体が一瞬リセットされたように
+  // 見えてしまっていたため、並びが変わっていないときはクラスの更新だけで済ませる。
+  let handNodeCache = new Map(); // cardId -> node
+  let lastHandOrder = [];
+
+  function applyHandCardState(node, c, state, isExchange, isSevenGive) {
+    const selected = isExchange ? selectedExchangeIds.has(c.id) : isSevenGive ? selectedSevenGiveIds.has(c.id) : selectedCardIds.has(c.id);
+    node.classList.toggle('selected', selected);
+    const playableIds = computePlayableCardIds(state);
+    node.classList.toggle('playable', !!playableIds && playableIds.has(c.id));
+    node.classList.toggle('unplayable', !!playableIds && !playableIds.has(c.id));
+    // 通常プレイ中: 今の選択と組み合わせられない(枚数上限オーバー/ランク不一致)カードは
+    // 選べないことを見た目でも示す (同じカードの束 + ジョーカー以外は複数選択できない)
+    const locked = !isExchange && !isSevenGive && !selected && !canAddToSelection(state, selectedCardIds, c);
+    node.classList.toggle('select-locked', locked);
+  }
+
   function renderHand(state) {
     const hc = el('hand-cards');
-    hc.innerHTML = '';
     // 選択状態のクリーンアップ (手札から消えたカードIDを除去)
     const idsInHand = new Set(state.myHand.map((c) => c.id));
     selectedCardIds.forEach((id) => { if (!idsInHand.has(id)) selectedCardIds.delete(id); });
@@ -769,24 +767,31 @@
     selectedExchangeIds.forEach((id) => { if (!idsInHand.has(id)) selectedExchangeIds.delete(id); });
     selectedSevenGiveIds.forEach((id) => { if (!idsInHand.has(id)) selectedSevenGiveIds.delete(id); });
 
-    const n = state.myHand.length;
-    const playableIds = computePlayableCardIds(state);
+    const isExchange = state.phase === 'EXCHANGE';
+    const isSevenGive = state.phase === 'SEVEN_GIVE';
+    const newOrder = state.myHand.map((c) => c.id);
+    const sameOrder = newOrder.length === lastHandOrder.length && newOrder.every((id, i) => id === lastHandOrder[i]);
+
+    if (sameOrder) {
+      // 枚数・並びが変わっていないので、既存のDOM要素はそのまま使い回して
+      // クラスだけ更新する(選択トグルのたびに作り直さない = 見た目がリセットされない)
+      state.myHand.forEach((c) => {
+        const node = handNodeCache.get(c.id);
+        if (node) applyHandCardState(node, c, state, isExchange, isSevenGive);
+      });
+      return;
+    }
+
+    hc.innerHTML = '';
+    handNodeCache = new Map();
+    lastHandOrder = newOrder;
     const nodes = [];
     state.myHand.forEach((c, i) => {
       const node = cardNode(c);
-      const isExchange = state.phase === 'EXCHANGE';
-      const isSevenGive = state.phase === 'SEVEN_GIVE';
-      const selected = isExchange ? selectedExchangeIds.has(c.id) : isSevenGive ? selectedSevenGiveIds.has(c.id) : selectedCardIds.has(c.id);
-      if (selected) node.classList.add('selected');
-      if (playableIds) node.classList.add(playableIds.has(c.id) ? 'playable' : 'unplayable');
-      // 通常プレイ中: 今の選択と組み合わせられない(枚数上限オーバー/ランク不一致)カードは
-      // 選べないことを見た目でも示す (同じカードの束 + ジョーカー以外は複数選択できない)
-      if (!isExchange && !isSevenGive && !selected && !canAddToSelection(state, selectedCardIds, c)) {
-        node.classList.add('select-locked');
-      }
-      // ホバー時は回転はそのままに、外側の座標系でまっすぐ上に持ち上げる
+      applyHandCardState(node, c, state, isExchange, isSevenGive);
+      // ホバー時はまっすぐ上に持ち上げる
       // (--lift を hover 時だけ CSS 側で書き換える。scale もしない = 横幅が変わらず隣のカードを覆わない)
-      node.style.transform = 'translateY(var(--lift, 0px)) ' + fanTransform(i, n);
+      node.style.transform = 'translateY(var(--lift, 0px))';
       node.style.transformOrigin = 'bottom center';
       node.style.zIndex = String(i);
       node.addEventListener('click', () => {
@@ -797,6 +802,7 @@
         renderHand(state);
         updateActionButtons(state);
       });
+      handNodeCache.set(c.id, node);
       hc.appendChild(node);
       nodes.push(node);
     });
