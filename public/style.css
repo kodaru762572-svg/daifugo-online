@@ -478,13 +478,13 @@ html, body {
 .field-pile { display: flex; align-items: center; justify-content: center; padding: 6px 18px; }
 /* 場に出たカードは手札より大きく表示する */
 .field-pile .playing-card {
-  width: 104px;
-  height: 146px;
-  font-size: 30px;
-  margin-left: -52px;
+  width: 118px;
+  height: 166px;
+  font-size: 34px;
+  margin-left: -59px;
 }
-.field-pile .playing-card .suit { font-size: 40px; }
-.field-pile .playing-card .corner { font-size: 15px; top: 8px; left: 9px; }
+.field-pile .playing-card .suit { font-size: 45px; }
+.field-pile .playing-card .corner { font-size: 17px; top: 9px; left: 10px; }
 .field-pile .playing-card:first-child { margin-left: 0; }
 .field-by { font-size: 11px; color: rgba(255,255,255,0.65); margin-top: 6px; }
 .field-empty { color: rgba(255,255,255,0.55); font-size: 13.5px; letter-spacing: 0.05em; }
@@ -512,8 +512,8 @@ html, body {
 
 .playing-card {
   position: relative;
-  width: 88px;
-  height: 124px;
+  width: 100px;
+  height: 141px;
   background: white;
   border-radius: 10px;
   box-shadow: 0 5px 13px rgba(0,0,0,0.45);
@@ -522,21 +522,21 @@ html, body {
   align-items: center;
   justify-content: center;
   font-weight: 800;
-  font-size: 26px;
+  font-size: 30px;
   user-select: none;
   flex-shrink: 0;
 }
 .playing-card.small { width: 40px; height: 58px; font-size: 12px; }
 .playing-card.red { color: var(--red); }
 .playing-card.black { color: var(--black); }
-.playing-card.joker { color: #7c3aed; font-size: 15px; }
-.playing-card .suit { font-size: 34px; line-height: 1; }
+.playing-card.joker { color: #7c3aed; font-size: 17px; }
+.playing-card .suit { font-size: 39px; line-height: 1; }
 .playing-card.small .suit { font-size: 14px; }
 .playing-card .corner {
   position: absolute;
-  top: 6px;
-  left: 8px;
-  font-size: 13px;
+  top: 7px;
+  left: 9px;
+  font-size: 15px;
   line-height: 1.05;
   font-weight: 800;
   text-align: left;
@@ -619,7 +619,7 @@ html, body {
   overflow-x: auto;
   overflow-y: visible;
   padding: 34px 12px 16px;
-  min-height: 166px;
+  min-height: 191px;
   background: linear-gradient(180deg, transparent 0%, transparent 30%, color-mix(in srgb, #6b4426 55%, transparent) 55%, #3c2415 100%);
   border-radius: 0 0 10px 10px;
 }
@@ -629,19 +629,19 @@ html, body {
   cursor: pointer;
   transition: transform 0.12s ease, box-shadow 0.12s ease, filter 0.12s ease, width 0.12s ease, height 0.12s ease;
   margin-left: 0;
-  width: calc(88px * var(--hand-card-scale, 1));
-  height: calc(124px * var(--hand-card-scale, 1));
-  font-size: calc(26px * var(--hand-card-scale, 1));
+  width: calc(100px * var(--hand-card-scale, 1));
+  height: calc(141px * var(--hand-card-scale, 1));
+  font-size: calc(30px * var(--hand-card-scale, 1));
   border-radius: calc(10px * var(--hand-card-scale, 1));
 }
 .hand-cards .playing-card {
   --lift: 0px;
 }
-.hand-cards .playing-card .suit { font-size: calc(34px * var(--hand-card-scale, 1)); }
+.hand-cards .playing-card .suit { font-size: calc(39px * var(--hand-card-scale, 1)); }
 .hand-cards .playing-card .corner {
-  font-size: calc(13px * var(--hand-card-scale, 1));
-  top: calc(6px * var(--hand-card-scale, 1));
-  left: calc(8px * var(--hand-card-scale, 1));
+  font-size: calc(15px * var(--hand-card-scale, 1));
+  top: calc(7px * var(--hand-card-scale, 1));
+  left: calc(9px * var(--hand-card-scale, 1));
 }
 .hand-cards .playing-card.has-art .corner {
   padding: calc(2px * var(--hand-card-scale, 1)) calc(5px * var(--hand-card-scale, 1)) calc(3px * var(--hand-card-scale, 1));
@@ -656,6 +656,9 @@ html, body {
   --lift: -26px;
   z-index: 99 !important;
   box-shadow: 0 10px 22px rgba(0,0,0,0.55) !important;
+  /* 一番右のカードにはバランス調整用のclip-pathが付いていることがあるが、
+     ホバー時は他のカードと同様に全体を確認できるようにする */
+  clip-path: none !important;
 }
 /* 選択中のカードは「出せる」の薄黄色グロー(下の.playable)と混ざって埋もれないよう、
    はっきり違う強さで示す: 太いアクセント枠 + 常時ちょっとだけ浮かせて周りと高さで差をつける */
@@ -663,6 +666,7 @@ html, body {
   --lift: -14px;
   box-shadow: 0 0 0 4px var(--accent), 0 4px 10px rgba(224,177,58,0.6), 0 10px 20px rgba(0,0,0,0.55);
   z-index: 50;
+  clip-path: none !important;
 }
 .hand-cards .playing-card.selected:hover,
 .hand-cards .playing-card.selected:focus-visible {
@@ -955,6 +959,8 @@ html, body {
 }
 .roundend-list { text-align: left; padding-left: 20px; }
 .roundend-list li { margin-bottom: 6px; }
+.roundend-actions { display: flex; gap: 8px; margin-top: 6px; }
+.roundend-actions .btn { width: auto; flex: 1; margin-bottom: 0; }
 
 .toast {
   position: fixed;
@@ -970,12 +976,24 @@ html, body {
 }
 
 @media (min-width: 700px) {
-  .playing-card { width: 104px; height: 146px; font-size: 30px; }
-  .playing-card .suit { font-size: 40px; }
-  .playing-card .corner { font-size: 15px; top: 8px; left: 9px; }
-  .field-pile .playing-card { width: 122px; height: 172px; font-size: 34px; margin-left: -60px; }
-  .field-pile .playing-card .suit { font-size: 46px; }
-  .field-pile .playing-card .corner { font-size: 17px; top: 9px; left: 10px; }
+  .playing-card { width: 118px; height: 166px; font-size: 34px; }
+  .playing-card .suit { font-size: 45px; }
+  .playing-card .corner { font-size: 17px; top: 9px; left: 10px; }
+  .field-pile .playing-card { width: 139px; height: 195px; font-size: 39px; margin-left: -68px; }
+  .field-pile .playing-card .suit { font-size: 52px; }
+  .field-pile .playing-card .corner { font-size: 19px; top: 10px; left: 11px; }
+  /* 手札は .hand-cards .playing-card の calc() が優先されるため、PC幅ではここでベース値を上書きする */
+  .hand-cards .playing-card {
+    width: calc(118px * var(--hand-card-scale, 1));
+    height: calc(166px * var(--hand-card-scale, 1));
+    font-size: calc(34px * var(--hand-card-scale, 1));
+  }
+  .hand-cards .playing-card .suit { font-size: calc(45px * var(--hand-card-scale, 1)); }
+  .hand-cards .playing-card .corner {
+    font-size: calc(17px * var(--hand-card-scale, 1));
+    top: calc(9px * var(--hand-card-scale, 1));
+    left: calc(10px * var(--hand-card-scale, 1));
+  }
 }
 
 /* ---------- 演出 (革命 / 8切り / スペ3返し / あがり) ---------- */

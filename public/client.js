@@ -685,7 +685,7 @@
     // 隣のカードが角の文字まで覆ってしまい「何のカードか分からない」状態になっていたため、
     // 「重ねる」より先に「縮める」を優先するよう引き下げた)
     const maxOverlapRatio = 0.58;
-    const minScale = 0.42; // これ以上は読めなくなるので縮小しない
+    const minScale = 0.5; // これ以上は読めなくなるので縮小しない(枚数が多いときに手札欄の下が余りすぎないよう、0.42から引き上げ)
 
     // 注意: 両端寄りのカードには fanTransform() による最大16度の rotate() が手前で
     // 適用されている。回転は幅の計算(flexレイアウト)そのものには影響しないが、
@@ -694,12 +694,16 @@
     // scrollWidth に反映されるため、先に「はみ出す分の余白」を計算に織り込んでおく
     // (実測値を見て後追いで縮め続けると、回転分のはみ出しがなかなかゼロにならず
     // 際限なく縮小し続けてしまうバグになるため、実測ループには頼らない)。
-    const cardAspect = 124 / 88; // .playing-card の height / width
+    const cardAspect = 141 / 100; // .playing-card の height / width
     const rotationMarginRatio = Math.sin((16 * Math.PI) / 180) * cardAspect; // ≈0.389 (cardWidthに対する比率)
 
     function widthForScale(s) {
       const cardWidth = baseCardWidth * s;
-      const naturalTotal = cardWidth * n;
+      // 必要なoverlapの計算にも回転はみ出し分(cardWidth * rotationMarginRatio)を
+      // 含めておかないと、ここで算出したoverlapがわずかに足りず、totalWidthが
+      // containerWidthを超えてしまい、下の縮小ループが不必要に発動して
+      // カードが必要以上に小さくなってしまう(=手札の下に余白が余る原因になっていた)。
+      const naturalTotal = cardWidth * n + cardWidth * rotationMarginRatio;
       let overlap = 0;
       if (naturalTotal > containerWidth) {
         overlap = (naturalTotal - containerWidth) / (n - 1);
@@ -736,6 +740,22 @@
         if (i > 0) node.style.marginLeft = `-${overlap}px`;
       });
     }
+
+    // 一番右のカードだけは後ろに隠す隣がいないため、他のカードが「一部だけ見える帯」
+    // なのに1枚だけ全部見えてしまい、バランスが悪く見える原因になっていた。
+    // clip-path で右端を他のカードと同じ幅だけ切って見た目の帯幅を揃える
+    // (レイアウト上の幅・全体の横幅には影響しない = はみ出しの心配はない)。
+    // ホバー時は z-index が最前面に来る通常の挙動と同じく、確認しやすいよう全体を見せる。
+    nodes.forEach((node, i) => {
+      node.style.clipPath = i === n - 1 && overlap > 0 ? `inset(0 ${overlap}px 0 0)` : '';
+    });
+
+    // 手札の枚数が多くて --hand-card-scale が縮んだときに、手札欄の高さだけ
+    // 全枚数最大時のまま余ってしまわないよう、実際のカード高さに合わせて詰める。
+    const padTop = parseFloat(cs.paddingTop) || 0;
+    const padBottom = parseFloat(cs.paddingBottom) || 0;
+    const cardHeight = cardWidth * cardAspect;
+    container.style.minHeight = `${Math.round(padTop + cardHeight + padBottom)}px`;
   }
 
   function renderHand(state) {
@@ -1272,6 +1292,7 @@
       if (!res.ok) toast(res.error);
     });
   });
+  el('btn-leave-round').addEventListener('click', leaveRoom);
 
   // 交換フェーズ用のカード選択 (renderHand内では拾えないので専用に上書き)
   el('hand-cards').addEventListener('click', (e) => {
