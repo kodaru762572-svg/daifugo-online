@@ -93,8 +93,24 @@ html, body {
   align-items: center;
   justify-content: space-between;
   gap: 10px;
+  flex-wrap: wrap;
 }
 .panel-header-row h2 { margin: 0; }
+.panel-header-btns {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  margin-left: auto;
+}
+/* 「解散」はルーム全員に影響する分、退出より一段強めの色にする */
+#btn-disband-lobby {
+  border-color: var(--danger);
+  color: var(--danger);
+  background: color-mix(in srgb, var(--danger) 8%, transparent);
+}
+#btn-disband-lobby:hover { background: color-mix(in srgb, var(--danger) 18%, transparent); }
 
 .divider {
   text-align: center;
@@ -194,6 +210,18 @@ html, body {
   flex-shrink: 0;
 }
 .player-list li .p-avatar img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.kick-btn {
+  border: 1px solid color-mix(in srgb, var(--danger) 45%, transparent);
+  color: var(--danger);
+  background: transparent;
+  font-size: 11px;
+  font-weight: 700;
+  padding: 4px 9px;
+  border-radius: 999px;
+  cursor: pointer;
+  flex-shrink: 0;
+}
+.kick-btn:hover { background: color-mix(in srgb, var(--danger) 12%, transparent); }
 
 /* ゲーム画面 */
 #screen-game {
@@ -260,6 +288,24 @@ html, body {
 }
 .badge-off { opacity: 0.4; }
 .badge-on { background: var(--accent); color: #1a1200; border-color: var(--accent-dark); }
+.badge-timer {
+  background: rgba(255,255,255,0.14);
+  font-variant-numeric: tabular-nums;
+  font-weight: 800;
+}
+.badge-timer-warn {
+  background: var(--danger);
+  color: white;
+  border-color: color-mix(in srgb, var(--danger) 60%, black);
+  animation: timer-warn-pulse 1s ease-in-out infinite;
+}
+@keyframes timer-warn-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.6; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .badge-timer-warn { animation: none; }
+}
 
 .opponents {
   display: grid;
@@ -341,6 +387,22 @@ html, body {
   overflow: hidden;
   text-overflow: ellipsis;
 }
+.kick-btn-opponent {
+  position: absolute;
+  top: -10px;
+  left: -6px;
+  border: none;
+  background: color-mix(in srgb, var(--danger) 88%, black);
+  color: white;
+  font-size: 9.5px;
+  font-weight: 800;
+  padding: 3px 7px;
+  border-radius: 999px;
+  cursor: pointer;
+  box-shadow: 0 2px 6px rgba(0,0,0,0.4);
+  z-index: 5;
+}
+.kick-btn-opponent:hover { background: var(--danger); }
 .opponent .role {
   position: absolute;
   top: -10px;

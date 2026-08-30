@@ -1,6 +1,14 @@
 (() => {
   'use strict';
 
+  // ブラウザから「アプリとしてインストール」できるようにするための登録
+  // (対応ブラウザでのみ動作。未対応でも通常のWebサイトとして問題なく使える)
+  if ('serviceWorker' in navigator) {
+    window.addEventListener('load', () => {
+      navigator.serviceWorker.register('/service-worker.js').catch(() => {});
+    });
+  }
+
   const socket = io();
 
   const el = (id) => document.getElementById(id);
@@ -21,6 +29,16 @@
     clearTimeout(toast._timer);
     toast._timer = setTimeout(() => (t.hidden = true), 2600);
   }
+
+  // ルーム解散/キックでリロードされた直後なら、その旨を一言表示する
+  try {
+    const leaveNotice = sessionStorage.getItem('daifugo-leave-notice');
+    if (leaveNotice) {
+      sessionStorage.removeItem('daifugo-leave-notice');
+      const msg = leaveNotice === 'kicked' ? 'ホストによってルームからキックされました' : 'ルームが解散されました';
+      window.addEventListener('load', () => setTimeout(() => toast(msg), 300));
+    }
+  } catch (e) {}
 
   const SUIT_SYMBOL = { S: '♠', H: '♥', D: '♦', C: '♣' };
 
@@ -347,6 +365,29 @@
   // ------------------------------------------------------------------
   el('btn-leave-lobby').addEventListener('click', leaveRoom);
 
+  el('btn-disband-lobby').addEventListener('click', () => {
+    if (!confirm('ルームを解散しますか?(参加者全員がルームから退出します)')) return;
+    socket.emit('room:disband', {}, (res) => {
+      if (res && !res.ok) el('lobby-error').textContent = res.error;
+      // 成功時は自分にも room:disbanded が届き、そちらでホーム画面に戻す処理をする
+    });
+  });
+
+  // ホストがルームを解散したときに全員(ホスト自身も含む)呼ばれる。
+  // BGM再生中やタイマーなど諸々の状態をきれいにリセットしたいので、退出時と同様にリロードする。
+  socket.on('room:disbanded', () => {
+    try { sessionStorage.setItem('daifugo-leave-notice', 'disband'); } catch (e) {}
+    clearSession();
+    location.reload();
+  });
+
+  // ホストにキックされたときに呼ばれる (自分だけ)。同様にリロードして状態をリセットする。
+  socket.on('room:kicked', () => {
+    try { sessionStorage.setItem('daifugo-leave-notice', 'kicked'); } catch (e) {}
+    clearSession();
+    location.reload();
+  });
+
   el('btn-start').addEventListener('click', () => {
     socket.emit('room:start', {}, (res) => {
       if (!res.ok) el('lobby-error').textContent = res.error;
@@ -357,6 +398,7 @@
     if (state.started) return; // ゲーム中はロビーUIを更新しない
     showScreen('lobby');
     el('lobby-roomcode').textContent = state.code;
+    const isHost = state.hostId === myPlayerId;
     const list = el('lobby-players');
     list.innerHTML = '';
     state.players.forEach((p) => {
@@ -384,12 +426,25 @@
         tag.className = 'host-tag';
         tag.textContent = 'ホスト';
         li.appendChild(tag);
+      } else if (isHost) {
+        const kickBtn = document.createElement('button');
+        kickBtn.type = 'button';
+        kickBtn.className = 'kick-btn';
+        kickBtn.textContent = 'キック';
+        kickBtn.title = `${p.name} をキックする`;
+        kickBtn.addEventListener('click', () => {
+          if (!confirm(`${p.name} をキックしますか?`)) return;
+          socket.emit('room:kick', { targetId: p.id }, (res) => {
+            if (res && !res.ok) el('lobby-error').textContent = res.error;
+          });
+        });
+        li.appendChild(kickBtn);
       }
       list.appendChild(li);
     });
-    const isHost = state.hostId === myPlayerId;
     el('btn-start').hidden = !isHost;
     el('btn-start').disabled = state.players.length < 2;
+    el('btn-disband-lobby').hidden = !isHost;
     el('lobby-wait-msg').hidden = isHost;
 
     const rulesBox = el('lobby-rules');
@@ -448,6 +503,7 @@
   function renderOpponents(state) {
     const container = el('opponents');
     container.innerHTML = '';
+    const isHost = lastRoomHostId === myPlayerId;
     state.players
       .filter((p) => p.id !== myPlayerId)
       .forEach((p) => {
@@ -465,6 +521,21 @@
           <div class="name">${escapeHtml(p.name)}</div>
           ${p.role ? `<div class="role">${p.role}</div>` : ''}
         `;
+        if (isHost && p.connected) {
+          const kickBtn = document.createElement('button');
+          kickBtn.type = 'button';
+          kickBtn.className = 'kick-btn kick-btn-opponent';
+          kickBtn.textContent = 'キック';
+          kickBtn.title = `${p.name} をキックする`;
+          kickBtn.addEventListener('click', (ev) => {
+            ev.stopPropagation();
+            if (!confirm(`${p.name} をキックしますか?`)) return;
+            socket.emit('room:kick', { targetId: p.id }, (res) => {
+              if (res && !res.ok) toast(res.error);
+            });
+          });
+          div.appendChild(kickBtn);
+        }
         container.appendChild(div);
       });
   }
@@ -610,31 +681,52 @@
     const padding = (parseFloat(cs.paddingLeft) || 0) + (parseFloat(cs.paddingRight) || 0);
     const containerWidth = container.clientWidth - padding;
     const baseCardWidth = nodes[0].offsetWidth;
-    const maxOverlapRatio = 0.74; // 重ねても角のランク/マークだけは必ず見える範囲
+    // 重ねても角のランク/マークだけは必ず見える範囲(以前は0.74だったが、枚数が多いときに
+    // 隣のカードが角の文字まで覆ってしまい「何のカードか分からない」状態になっていたため、
+    // 「重ねる」より先に「縮める」を優先するよう引き下げた)
+    const maxOverlapRatio = 0.58;
     const minScale = 0.42; // これ以上は読めなくなるので縮小しない
+
+    function overlapForScale(s) {
+      const cardWidth = baseCardWidth * s;
+      const naturalTotal = cardWidth * n;
+      let overlap = 0;
+      if (naturalTotal > containerWidth) {
+        overlap = (naturalTotal - containerWidth) / (n - 1);
+        overlap = Math.min(overlap, cardWidth * maxOverlapRatio);
+      }
+      return { cardWidth, overlap };
+    }
+    function applyLayout(s, overlap) {
+      container.style.setProperty('--hand-card-scale', String(s));
+      nodes.forEach((node, i) => {
+        if (i > 0) node.style.marginLeft = `-${overlap}px`;
+      });
+    }
+
     const denom = 1 + (n - 1) * (1 - maxOverlapRatio);
     let scale = containerWidth / (baseCardWidth * denom);
     scale = Math.max(minScale, Math.min(1, scale));
-    container.style.setProperty('--hand-card-scale', String(scale));
-    const cardWidth = baseCardWidth * scale;
-    const naturalTotal = cardWidth * n;
-    let overlap = 0;
-    if (naturalTotal > containerWidth) {
-      overlap = (naturalTotal - containerWidth) / (n - 1);
-      overlap = Math.min(overlap, cardWidth * maxOverlapRatio);
+    let { cardWidth, overlap } = overlapForScale(scale);
+    applyLayout(scale, overlap);
+
+    // 計算上は収まるはずでも、丸め誤差などで実際にはまだ僅かにはみ出すことがある。
+    // その場合、重なりを増やす(=角が隠れる)のではなく、まずカード自体をさらに縮める
+    // ことで対処し、角のランク/マークが見える範囲を可能な限り保つ。
+    let guard = 0;
+    while (container.scrollWidth - container.clientWidth > 0.5 && scale > minScale && guard++ < 12) {
+      scale = Math.max(minScale, scale - 0.03);
+      ({ cardWidth, overlap } = overlapForScale(scale));
+      applyLayout(scale, overlap);
     }
-    nodes.forEach((node, i) => {
-      if (i > 0) node.style.marginLeft = `-${overlap}px`;
-    });
-    // 計算上は収まるはずでも、丸め誤差などで実際にはまだ僅かにはみ出すことがあるため、
-    // 実測(scrollWidth)して残っていたら重なりを少しだけ追加で補正する。
+
+    // 最小縮小率まで来てもなお僅かに収まらない(極端に枚数が多い場合)は、
+    // スクロールさせない方を優先し、最後の手段として重なりを追加する。
     const overflow = container.scrollWidth - container.clientWidth;
     if (overflow > 0.5) {
       const extra = overflow / (n - 1) + 0.5;
       overlap = Math.min(overlap + extra, cardWidth * 0.92);
-      nodes.forEach((node, i) => {
-        if (i > 0) node.style.marginLeft = `-${overlap}px`;
-      });
+      applyLayout(scale, overlap);
     }
   }
 
@@ -761,6 +853,27 @@
     el('btn-pass').disabled = !myTurn || iAmFinished || !state.field;
   }
 
+  // 手番の残り時間バッジ (毎秒更新。0秒になったら次のgame:stateが来るまで0のまま表示)
+  let turnTimerInterval = null;
+  function renderTurnTimer(state) {
+    const badge = el('meta-turn-timer');
+    if (!badge) return;
+    if (turnTimerInterval) { clearInterval(turnTimerInterval); turnTimerInterval = null; }
+    if (state.phase !== 'PLAYING' || !state.turnDeadline) {
+      badge.hidden = true;
+      return;
+    }
+    badge.hidden = false;
+    const update = () => {
+      const remain = Math.max(0, Math.ceil((state.turnDeadline - Date.now()) / 1000));
+      badge.textContent = `⏱ ${remain}`;
+      badge.classList.toggle('badge-timer-warn', remain <= 10);
+      if (remain <= 0 && turnTimerInterval) { clearInterval(turnTimerInterval); turnTimerInterval = null; }
+    };
+    update();
+    turnTimerInterval = setInterval(update, 250);
+  }
+
   function renderMeta(state) {
     el('meta-round').textContent = `ラウンド ${state.round}`;
     const rev = el('meta-revolution');
@@ -862,6 +975,7 @@
       showScreen('game');
     triggerEffects(state);
     renderMeta(state);
+    renderTurnTimer(state);
     renderSelfBadge(state);
     renderOpponents(state);
     renderField(state);
