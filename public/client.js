@@ -795,12 +795,18 @@
       node.style.transformOrigin = 'bottom center';
       node.style.zIndex = String(i);
       node.addEventListener('click', () => {
-        if (state.phase === 'EXCHANGE' || state.phase === 'SEVEN_GIVE') return; // 交換/7渡しフェーズは別ハンドラ
+        // ここで受け取った state をそのまま閉じ込めてしまうと、選択操作のたびに
+        // DOM要素を作り直さなくなった影響で、このクリックハンドラが定義された
+        // 時点(=前回作り直された時)の古い state を参照し続けてしまい、
+        // 場の状況が変わった後もそれに気付けず「出せない」判定になることがあった。
+        // 必ず socket 受信のたびに更新される最新の lastGameState を見るようにする。
+        const cur = lastGameState || state;
+        if (cur.phase === 'EXCHANGE' || cur.phase === 'SEVEN_GIVE') return; // 交換/7渡しフェーズは別ハンドラ
         if (selectedCardIds.has(c.id)) selectedCardIds.delete(c.id);
-        else if (canAddToSelection(state, selectedCardIds, c)) selectedCardIds.add(c.id);
+        else if (canAddToSelection(cur, selectedCardIds, c)) selectedCardIds.add(c.id);
         else return;
-        renderHand(state);
-        updateActionButtons(state);
+        renderHand(cur);
+        updateActionButtons(cur);
       });
       handNodeCache.set(c.id, node);
       hc.appendChild(node);

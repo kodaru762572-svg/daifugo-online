@@ -371,4 +371,16 @@ server.listen(PORT, () => {
   console.log('    外部公開する必要があります。');
   console.log('  ※ このウィンドウを閉じるとサーバーは停止します。');
   console.log('========================================');
+
+  // exe化(pkg)して配布した場合は、起動したら自動でブラウザを開いてあげる
+  // (通常の node コマンド実行時は開発中に毎回勝手に開くと邪魔なので開かない)
+  if (process.pkg) {
+    const url = `http://localhost:${PORT}`;
+    const openCmd = process.platform === 'win32' ? 'start' : process.platform === 'darwin' ? 'open' : 'xdg-open';
+    try {
+      require('child_process').exec(`${openCmd} ${process.platform === 'win32' ? '""' : ''} "${url}"`);
+    } catch (e) {
+      // 自動で開けなくても致命的ではないので握りつぶす(手動でURLを開けば良い)
+    }
+  }
 });
