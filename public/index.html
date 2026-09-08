@@ -49,6 +49,13 @@
       <label class="rule-row"><input type="checkbox" data-rule="cardExchange" checked><span><b>カード交換</b><small>次ラウンドで大富豪⇔大貧民などが交換</small></span></label>
       <label class="rule-row"><input type="checkbox" data-rule="sevenGive" checked><span><b>7渡し</b><small>7を出した枚数分、好きな相手にカードを渡せる</small></span></label>
       <label class="rule-row"><input type="checkbox" data-rule="elevenBack" checked><span><b>イレブンバック</b><small>Jを出すとそのトリック限定で強さが逆転</small></span></label>
+      <label class="rule-row"><input type="checkbox" data-rule="fiveSkip" checked><span><b>5のスキップ</b><small>5を出すと次のプレイヤーの番を飛ばす</small></span></label>
+      <label class="rule-row"><input type="checkbox" data-rule="tenClear" checked><span><b>10捨て</b><small>10を出すと場が流れ、続けて出せる</small></span></label>
+      <label class="rule-row"><input type="checkbox" data-rule="fourReturn" checked><span><b>4戻し</b><small>4を出すと順番が前のプレイヤーに戻る</small></span></label>
+      <label class="rule-row"><input type="checkbox" data-rule="ambulance" checked><span><b>救急車</b><small>9の2枚出しで場が流れ、続けて出せる</small></span></label>
+      <label class="rule-row"><input type="checkbox" data-rule="rokurokubi" checked><span><b>ろくろ首</b><small>6の2枚出しで場が流れ、続けて出せる</small></span></label>
+      <label class="rule-row"><input type="checkbox" data-rule="miyakoochi" checked><span><b>都落ち</b><small>前回大富豪が今回1位を逃すと強制的に大貧民</small></span></label>
+      <label class="rule-row"><input type="checkbox" data-rule="straight" checked><span><b>階段</b><small>同じスートの連番を3枚以上まとめて出せる</small></span></label>
     </div>
 
     <button id="btn-create" class="btn btn-primary">新しいルームを作る</button>
@@ -109,6 +116,8 @@
     <div id="opponents" class="opponents"></div>
   </div>
 
+  <div id="your-turn-banner" class="your-turn-banner" hidden>あなたの番です</div>
+
   <div class="field-area" id="field-area">
     <div id="field-cards" class="field-cards"></div>
     <div id="field-empty" class="field-empty">場は空です。好きなカードを出してください</div>
@@ -139,17 +148,12 @@
       <button id="btn-pass" class="btn">パス</button>
       <button id="btn-play" class="btn btn-primary">出す</button>
       <button id="btn-sticker-toggle" class="btn btn-ghost">😊</button>
-      <button id="btn-log-toggle" class="btn btn-ghost">ログ</button>
       <button id="btn-bgm-toggle" class="btn btn-ghost">🎵 BGM</button>
     </div>
     <div id="hand-cards" class="hand-cards"></div>
   </div>
 
   <div id="sticker-panel" class="sticker-panel" hidden></div>
-
-  <div id="log-panel" class="log-panel" hidden>
-    <div id="log-list"></div>
-  </div>
 
   <div id="bgm-panel" class="bgm-panel" hidden>
     <div class="bgm-add-row">

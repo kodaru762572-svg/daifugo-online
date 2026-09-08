@@ -231,8 +231,36 @@
       tone(c, 784, t, 0.1, 'sine', 0.06);
       tone(c, 988, t + 0.1, 0.14, 'sine', 0.06);
     });
+    const tenClear = guard((c) => {
+      const t = c.currentTime;
+      noise(c, t, 0.28, 2600, 500, 0.14);
+      tone(c, 260, t + 0.03, 0.22, 'square', 0.07);
+    });
+    const fiveSkip = guard((c) => {
+      const t = c.currentTime;
+      tone(c, 700, t, 0.06, 'square', 0.06);
+      tone(c, 950, t + 0.07, 0.09, 'square', 0.06);
+    });
+    const fourReturn = guard((c) => {
+      const t = c.currentTime;
+      [660, 550, 440].forEach((f, i) => tone(c, f, t + i * 0.06, 0.1, 'triangle', 0.07));
+    });
+    const ambulance = guard((c) => {
+      const t = c.currentTime;
+      // 救急車のサイレン風に2音を交互に鳴らす
+      [960, 760, 960, 760].forEach((f, i) => tone(c, f, t + i * 0.11, 0.12, 'sine', 0.08));
+      noise(c, t, 0.2, 2400, 700, 0.08);
+    });
+    const rokurokubi = guard((c) => {
+      const t = c.currentTime;
+      // 首が伸びるような不気味な滑り上昇音
+      noise(c, t, 0.3, 2200, 400, 0.13);
+      tone(c, 220, t + 0.02, 0.3, 'sawtooth', 0.07);
+      tone(c, 440, t + 0.18, 0.16, 'sawtooth', 0.06);
+    });
     return {
       playCard, pass, eightCut, revolution, spade3, finish, yourTurn, elevenBack,
+      tenClear, fiveSkip, fourReturn, ambulance, rokurokubi,
       unlock: () => ensureCtx(),
       setMuted: (v) => { muted = v; },
       isMuted: () => muted,
@@ -248,6 +276,13 @@
     cardExchange: 'カード交換',
     sevenGive: '7渡し',
     elevenBack: 'イレブンバック',
+    fiveSkip: '5のスキップ',
+    tenClear: '10捨て',
+    fourReturn: '4戻し',
+    ambulance: '救急車',
+    rokurokubi: 'ろくろ首',
+    miyakoochi: '都落ち',
+    straight: '階段',
   };
 
   function readRulesFromUI() {
@@ -504,7 +539,14 @@
     const container = el('opponents');
     container.innerHTML = '';
     const isHost = lastRoomHostId === myPlayerId;
-    state.players
+    // 表示順を「参加順」ではなく「自分の次に手番が回ってくる順番」に並べ替える
+    // (state.players の並び = 実際の手番が回る順番なので、自分の位置を先頭に来るよう
+    //  ローテーションさせてから自分自身を除外すれば、自分の次の人から順に並ぶ)
+    const players = state.players;
+    const myIdx = players.findIndex((p) => p.id === myPlayerId);
+    const orderedPlayers = myIdx === -1 ? players : players.slice(myIdx + 1).concat(players.slice(0, myIdx + 1));
+    let anySpectateHand = false;
+    orderedPlayers
       .filter((p) => p.id !== myPlayerId)
       .forEach((p) => {
         const div = document.createElement('div');
@@ -521,6 +563,15 @@
           <div class="name">${escapeHtml(p.name)}</div>
           ${p.role ? `<div class="role">${p.role}</div>` : ''}
         `;
+        // あがった後の観戦: サーバーから相手の手札が送られてきているときだけ、
+        // 小さいカードを並べて中身を見せる
+        if (p.hand && p.hand.length > 0) {
+          anySpectateHand = true;
+          const spec = document.createElement('div');
+          spec.className = 'spectate-hand';
+          p.hand.forEach((c) => spec.appendChild(cardNode(c, { small: true })));
+          div.appendChild(spec);
+        }
         if (isHost && p.connected) {
           const kickBtn = document.createElement('button');
           kickBtn.type = 'button';
@@ -538,6 +589,7 @@
         }
         container.appendChild(div);
       });
+    container.classList.toggle('spectating', anySpectateHand);
   }
 
   // 場に出したカードを少し重ねて散らす (投げ出したような見た目)
@@ -548,21 +600,51 @@
     const ty = ((i * 37) % 11) - 5;
     return `rotate(${rotate}deg) translateY(${ty}px)`;
   }
-  // 今の選択状態から、次にどのカードを追加選択できるか (枚数上限 / ランク一致) を計算する。
-  // ジョーカーは同じランクの束の穴埋めとして常に選べる。
+  // 今の選択状態から、次にどのカードを追加選択できるか (枚数上限 / ランク・スート一致) を計算する。
+  // ジョーカーは「同じランクの束」の穴埋めとしても「階段」の穴埋めとしても常に選べる。
+  // 非ジョーカーが1枚も選ばれていない間は種別未確定 ('any') で何でも足せる。
+  // 非ジョーカーが1枚だけ選ばれている間は、次に同じランクの札(束を継続)か
+  // 同じスートの別ランクの札(階段を開始)かのどちらもまだ有効 ('either')。
+  // 非ジョーカーが2枚以上になった時点で、それらのランクが全部同じなら 'set'、
+  // 全部同じスートでランクが異なれば(階段ルール有効時のみ) 'straight' に確定する。
   function selectionConstraints(state, selectedSet) {
     const hand = state.myHand;
     const field = state.field;
     const cap = field ? field.count : Infinity; // リード時(場が空)は枚数の上限なし
     const selectedCards = hand.filter((c) => selectedSet.has(c.id));
-    const anchor = selectedCards.find((c) => !c.joker);
-    return { cap, anchorRank: anchor ? anchor.rank : null };
+    const nonJoker = selectedCards.filter((c) => !c.joker);
+    const straightEnabled = !!(state.rules && state.rules.straight);
+    const distinctRanks = new Set(nonJoker.map((c) => c.rank));
+    const distinctSuits = new Set(nonJoker.map((c) => c.suit));
+
+    let mode = 'any';
+    if (nonJoker.length === 1) {
+      mode = straightEnabled ? 'either' : 'set';
+    } else if (nonJoker.length >= 2) {
+      if (distinctRanks.size === 1) mode = 'set';
+      else if (straightEnabled && distinctSuits.size === 1) mode = 'straight';
+      else mode = 'locked'; // 通常起きない (組み合わせが既に不整合)
+    }
+
+    return {
+      cap,
+      mode,
+      anchorRank: nonJoker[0] ? nonJoker[0].rank : null,
+      anchorSuit: nonJoker[0] ? nonJoker[0].suit : null,
+      selectedRanks: distinctRanks,
+    };
   }
   function canAddToSelection(state, selectedSet, card) {
-    const { cap, anchorRank } = selectionConstraints(state, selectedSet);
+    const { cap, mode, anchorRank, anchorSuit, selectedRanks } = selectionConstraints(state, selectedSet);
     if (selectedSet.size >= cap) return false;
-    if (anchorRank && !card.joker && card.rank !== anchorRank) return false;
-    return true;
+    if (card.joker) return true; // ジョーカーはどの種別でも穴埋めとして常に足せる
+    if (mode === 'any') return true;
+    if (mode === 'set') return card.rank === anchorRank;
+    if (mode === 'straight') return card.suit === anchorSuit && !selectedRanks.has(card.rank);
+    if (mode === 'either') {
+      return card.rank === anchorRank || (card.suit === anchorSuit && !selectedRanks.has(card.rank));
+    }
+    return card.rank === anchorRank; // 'locked' のフォールバック
   }
 
   function renderField(state) {
@@ -617,41 +699,126 @@
   }
 
   // 今出せる/出せないカードを判定する (自分の番のときだけ意味を持つ)
+  // ジョーカーは同じランクの束の「穴埋め」として使えるため、そのランクの実カードだけでは
+  // 必要枚数に届かなくても、ジョーカーと合わせれば出せる場合はきちんと光らせる必要がある。
+  // また、しばり中は「出す組み合わせに実際に使うカードのスート集合」がロック中のスートと
+  // 完全一致すればよく、その他に余分なスートのカードを同じランクにたくさん持っていても
+  // 出せなくなるわけではない (以前はランク内の全カードのスート集合で判定していたため、
+  // 出せるはずの組み合わせまで光らなくなるバグがあった)。
   function computePlayableCardIds(state) {
     if (state.phase !== 'PLAYING' || state.currentTurnPlayerId !== myPlayerId) return null;
     const hand = state.myHand;
     const field = state.field;
     // サーバーの effectiveRevolution() と同じロジック (通常の革命 XOR イレブンバック)
     const revolution = !!state.revolution !== !!state.elevenBack;
-    const lockedSuits = state.lockedSuits;
+    const lockedSuits = state.lockedSuits && state.lockedSuits.length > 0 ? state.lockedSuits : null;
     const rules = state.rules || {};
-    const byRank = new Map();
+    const nonJokerByRank = new Map();
     hand.forEach((c) => {
-      const key = c.joker ? 'JOKER' : c.rank;
-      if (!byRank.has(key)) byRank.set(key, []);
-      byRank.get(key).push(c);
+      if (c.joker) return;
+      if (!nonJokerByRank.has(c.rank)) nonJokerByRank.set(c.rank, []);
+      nonJokerByRank.get(c.rank).push(c);
     });
+    const jokerCards = hand.filter((c) => c.joker);
+    const numJokers = jokerCards.length;
     const neededCount = field ? field.count : 1;
     const result = new Set();
-    byRank.forEach((cards, rankKey) => {
-      if (cards.length < neededCount) return;
-      if (!field) { cards.forEach((c) => result.add(c.id)); return; }
-      const isSpade3Group = rules.spade3Return && rankKey === '3' && field.rank === 'JOKER' && field.count === 1;
-      if (isSpade3Group) {
-        cards.forEach((c) => { if (c.suit === 'S') result.add(c.id); });
-        return;
+    let jokerNeededSomewhere = false;
+    // フィールドが「階段」の時は同ランクの束では絶対に勝てない(kindが一致しないため)ので、
+    // その場合はこの同ランク判定ロジック自体を丸ごとスキップする。フィールドが無い(リード)か
+    // フィールドが「セット」の時だけ従来通り判定する。
+    const fieldKind = field ? (field.kind || 'set') : null;
+    if (!field || fieldKind === 'set') {
+      nonJokerByRank.forEach((cards, rank) => {
+        // スペ3返し: 場がジョーカー単騎の時だけ、スペードの3の単騎だけは特別に勝てる
+        // (ジョーカーには通常どうやっても勝てないので、それ以外の判定はここで打ち切ってよい)
+        if (field && field.rank === 'JOKER' && field.count === 1 && rank === '3') {
+          if (rules.spade3Return) cards.forEach((c) => { if (c.suit === 'S') result.add(c.id); });
+          return;
+        }
+        if (!field) {
+          // リード時は好きな枚数(1枚以上)を選んで出せるので、そのランクの手札は全部候補になる
+          cards.forEach((c) => result.add(c.id));
+          return;
+        }
+        const fieldStrength = strengthOf(field.rank, revolution);
+        const myStrength = strengthOf(rank, revolution);
+        if (myStrength <= fieldStrength) return;
+        if (cards.length + numJokers < neededCount) return; // ジョーカーを足しても枚数が足りない
+
+        if (lockedSuits) {
+          // しばり中: ロック対象の各スートを最低1枚は持っている必要があり(でなければそのスートの
+          // 分だけ埋められない)、かつロック対象スートのカード+ジョーカーで必要枚数を賄えること。
+          // ロック対象外のスートのカードはこのランクでは(このタイミングでは)出せない。
+          const bySuit = new Map();
+          cards.forEach((c) => bySuit.set(c.suit, (bySuit.get(c.suit) || 0) + 1));
+          const hasAllLockedSuits = lockedSuits.every((s) => (bySuit.get(s) || 0) >= 1);
+          const lockedSuitCardCount = lockedSuits.reduce((sum, s) => sum + (bySuit.get(s) || 0), 0);
+          if (!hasAllLockedSuits || lockedSuitCardCount + numJokers < neededCount) return;
+          cards.forEach((c) => { if (lockedSuits.includes(c.suit)) result.add(c.id); });
+          if (lockedSuitCardCount < neededCount) jokerNeededSomewhere = true;
+        } else {
+          cards.forEach((c) => result.add(c.id));
+          if (cards.length < neededCount) jokerNeededSomewhere = true;
+        }
+      });
+    }
+
+    // 階段 (straight) のハイライト計算: 同じスートの連続したランクを、手持ちのジョーカーで
+    // 穴埋めしつつ判定する。フィールドが「セット」の時は階段では絶対に返せないので計算不要。
+    // フィールドが無い(リード)か「階段」の時だけ、同じスートで実現可能な連続区間(長さ3以上、
+    // リード時は3〜13枚、返す時はフィールドと同じ枚数)を全探索し、区間内の実カードを光らせる。
+    if (rules.straight && (!field || fieldKind === 'straight')) {
+      // しばり中は、ロック対象がちょうど1スートの時だけ階段が候補になりうる
+      // (階段のsuits配列は常に単一スートなので、ロック対象が2スート以上だと一致し得ない)。
+      const straightSuits = lockedSuits
+        ? (lockedSuits.length === 1 ? lockedSuits : [])
+        : Array.from(new Set(hand.filter((c) => !c.joker).map((c) => c.suit)));
+      straightSuits.forEach((suit) => {
+        const bySuitRank = new Map(); // rankIndex -> card
+        hand.forEach((c) => {
+          if (c.joker || c.suit !== suit) return;
+          const idx = rankIndex(c.rank);
+          if (idx >= 0) bySuitRank.set(idx, c);
+        });
+        if (bySuitRank.size === 0) return;
+        const lengths = field ? [field.count] : [3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13];
+        lengths.forEach((len) => {
+          if (len < 3) return;
+          for (let lowIdx = 0; lowIdx + len - 1 < RANK_ORDER.length; lowIdx++) {
+            const highIdx = lowIdx + len - 1;
+            const realCardsInWindow = [];
+            for (let i = lowIdx; i <= highIdx; i++) {
+              const c = bySuitRank.get(i);
+              if (c) realCardsInWindow.push(c);
+            }
+            if (realCardsInWindow.length === 0) continue; // 実カード無し(全部ジョーカー)は不成立
+            const neededJokers = len - realCardsInWindow.length;
+            if (neededJokers > numJokers) continue; // ジョーカーを足しても穴が埋まらない
+            if (field) {
+              const myStrength = strengthOf(RANK_ORDER[lowIdx], revolution);
+              const fieldStrength = strengthOf(field.lowRank, revolution);
+              if (myStrength <= fieldStrength) continue; // 場より弱い/同じ開始ランクは出せない
+            }
+            realCardsInWindow.forEach((c) => result.add(c.id));
+            if (neededJokers > 0) jokerNeededSomewhere = true;
+          }
+        });
+      });
+    }
+
+    // ジョーカー自体を光らせるかどうか: (1) リード時は常に出せる、(2) 単騎で場の最強を上回れる、
+    // (3) どこかのランクの穴埋めとして実際に必要とされている、のいずれか
+    if (numJokers > 0) {
+      if (!field) {
+        jokerCards.forEach((c) => result.add(c.id));
+      } else {
+        if (neededCount === 1 && strengthOf('JOKER', revolution) > strengthOf(field.rank, revolution)) {
+          jokerCards.forEach((c) => result.add(c.id));
+        }
+        if (jokerNeededSomewhere) jokerCards.forEach((c) => result.add(c.id));
       }
-      const fieldStrength = strengthOf(field.rank, revolution);
-      const myStrength = strengthOf(rankKey, revolution);
-      if (myStrength <= fieldStrength) return;
-      if (lockedSuits && rankKey !== 'JOKER') {
-        const suitSet = Array.from(new Set(cards.map((c) => c.suit))).sort();
-        const locked = lockedSuits.slice().sort();
-        const matches = suitSet.length === locked.length && suitSet.every((s, i) => s === locked[i]);
-        if (!matches) return;
-      }
-      cards.forEach((c) => result.add(c.id));
-    });
+    }
     return result;
   }
 
@@ -663,14 +830,17 @@
   function layoutHandOverlap(container, nodes) {
     const n = nodes.length;
     if (n === 0) return;
-    // まず等倍でカード本来の幅を測るためにリセット
-    container.style.setProperty('--hand-card-scale', '1');
     nodes.forEach((node) => { node.style.marginLeft = '0px'; });
-    if (n <= 1) return;
+    if (n <= 1) { container.style.setProperty('--hand-card-scale', '1'); return; }
     const cs = getComputedStyle(container);
     const padding = (parseFloat(cs.paddingLeft) || 0) + (parseFloat(cs.paddingRight) || 0);
     const containerWidth = container.clientWidth - padding;
-    const baseCardWidth = nodes[0].offsetWidth;
+    // カード本来の幅はCSS側で固定値(100px、.playing-cardのwidth指定)として決まっているため、
+    // 以前は等倍(--hand-card-scale:1)に一旦リセットしてDOMから実測していたが、この
+    // リセットが(タイミングによっては)一瞬だけ画面に反映されてしまい、手札欄が一瞬
+    // 大きく広がって横/縦スクロールバーが出る「リロードしたような」チラつきの原因になって
+    // いた。実測せず、CSSの固定値をそのまま使うことでこのリセットそのものを無くす。
+    const baseCardWidth = 100;
     // 重ねても角のランク/マークだけは必ず見える範囲(以前は0.74だったが、枚数が多いときに
     // 隣のカードが角の文字まで覆ってしまい「何のカードか分からない」状態になっていたため、
     // 「重ねる」より先に「縮める」を優先するよう引き下げた)
@@ -721,20 +891,19 @@
       });
     }
 
-    // 一番右のカードだけは後ろに隠す隣がいないため、他のカードが「一部だけ見える帯」
-    // なのに1枚だけ全部見えてしまい、バランスが悪く見える原因になっていた。
-    // clip-path で右端を他のカードと同じ幅だけ切って見た目の帯幅を揃える
-    // (レイアウト上の幅・全体の横幅には影響しない = はみ出しの心配はない)。
-    // ホバー時は z-index が最前面に来る通常の挙動と同じく、確認しやすいよう全体を見せる。
-    nodes.forEach((node, i) => {
-      node.style.clipPath = i === n - 1 && overlap > 0 ? `inset(0 ${overlap}px 0 0)` : '';
-    });
+    // 以前は「一番右のカードだけ隠す隣がいないため全部見えてバランスが悪い」という理由で
+    // clip-pathで右端を他のカードと同じ帯幅に切り取っていたが、実際には絵柄(特に絵札)が
+    // 不自然に欠けて見える見た目のバグになっていたため、切り取りはやめて他のカードと
+    // 同様にそのまま表示する。
+    nodes.forEach((node) => { node.style.clipPath = ''; });
+    const oldProxy = container.querySelector(':scope > .hand-card-hit-proxy');
+    if (oldProxy) oldProxy.remove();
 
     // 手札の枚数が多くて --hand-card-scale が縮んだときに、手札欄の高さだけ
     // 全枚数最大時のまま余ってしまわないよう、実際のカード高さに合わせて詰める。
     const padTop = parseFloat(cs.paddingTop) || 0;
-    const padBottom = parseFloat(cs.paddingBottom) || 0;
     const cardHeight = cardWidth * cardAspect;
+    const padBottom = parseFloat(cs.paddingBottom) || 0;
     container.style.minHeight = `${Math.round(padTop + cardHeight + padBottom)}px`;
   }
 
@@ -859,17 +1028,6 @@
     el('btn-sevengive-submit').disabled = selectedSevenGiveIds.size !== pending.count || !sevenGiveTarget;
   }
 
-  function renderLog(state) {
-    const list = el('log-list');
-    list.innerHTML = '';
-    state.log.forEach((entry) => {
-      const div = document.createElement('div');
-      div.textContent = entry.message;
-      list.appendChild(div);
-    });
-    list.scrollTop = list.scrollHeight;
-  }
-
   function renderRoundEnd(state) {
     const modal = el('modal-roundend');
     if (state.phase !== 'ROUND_END') { modal.hidden = true; return; }
@@ -891,6 +1049,8 @@
     const iAmFinished = state.players.find((p) => p.id === myPlayerId)?.finished;
     el('btn-play').disabled = !myTurn || iAmFinished || selectedCardIds.size === 0;
     el('btn-pass').disabled = !myTurn || iAmFinished || !state.field;
+    const turnBanner = el('your-turn-banner');
+    if (turnBanner) turnBanner.hidden = !myTurn || iAmFinished;
   }
 
   // 手番の残り時間バッジ (毎秒更新。0秒になったら次のgame:stateが来るまで0のまま表示)
@@ -948,7 +1108,18 @@
   // ------------------------------------------------------------------
   // 演出 (革命 / 8切り / スペ3返し / あがり)
   // ------------------------------------------------------------------
-  const EFFECT_CLASS = { REVOLUTION: 'revolution', EIGHT_CUT: 'eight', SPADE3_RETURN: 'spade3', FINISH: 'finish', ELEVEN_BACK: 'elevenback' };
+  const EFFECT_CLASS = {
+    REVOLUTION: 'revolution',
+    EIGHT_CUT: 'eight',
+    SPADE3_RETURN: 'spade3',
+    FINISH: 'finish',
+    ELEVEN_BACK: 'elevenback',
+    TEN_CLEAR: 'tenclear',
+    FIVE_SKIP: 'fiveskip',
+    FOUR_RETURN: 'fourreturn',
+    AMBULANCE: 'ambulance',
+    ROKUROKUBI: 'rokurokubi',
+  };
   function playEffect(type, text) {
     return new Promise((resolve) => {
       const flash = el('fx-flash');
@@ -997,6 +1168,11 @@
     if (effects.includes('REVOLUTION')) { jobs.push(() => playEffect('REVOLUTION', '革命!!')); AudioFX.revolution(); }
     if (effects.includes('ELEVEN_BACK')) { jobs.push(() => playEffect('ELEVEN_BACK', 'イレブンバック!')); AudioFX.elevenBack(); }
     if (effects.includes('EIGHT_CUT')) { jobs.push(() => playEffect('EIGHT_CUT', '8切り!')); AudioFX.eightCut(); }
+    if (effects.includes('TEN_CLEAR')) { jobs.push(() => playEffect('TEN_CLEAR', '10捨て!')); AudioFX.tenClear(); }
+    if (effects.includes('FIVE_SKIP')) { jobs.push(() => playEffect('FIVE_SKIP', '5スキップ!')); AudioFX.fiveSkip(); }
+    if (effects.includes('FOUR_RETURN')) { jobs.push(() => playEffect('FOUR_RETURN', '4戻し!')); AudioFX.fourReturn(); }
+    if (effects.includes('AMBULANCE')) { jobs.push(() => playEffect('AMBULANCE', '救急車!')); AudioFX.ambulance(); }
+    if (effects.includes('ROKUROKUBI')) { jobs.push(() => playEffect('ROKUROKUBI', 'ろくろ首!')); AudioFX.rokurokubi(); }
     if (effects.includes('SPADE3_RETURN')) { jobs.push(() => playEffect('SPADE3_RETURN', 'スペ3返し!')); AudioFX.spade3(); }
     if (effects.includes('FINISH')) { jobs.push(() => playEffect('FINISH', `${actor} あがり!`)); AudioFX.finish(); }
     if (jobs.length === 0) {
@@ -1022,7 +1198,6 @@
     renderHand(state);
     renderExchange(state);
     renderSevenGive(state);
-    renderLog(state);
     renderRoundEnd(state);
     updateActionButtons(state);
   });
@@ -1043,11 +1218,6 @@
     socket.emit('game:pass', {}, (res) => {
       if (!res.ok) toast(res.error);
     });
-  });
-
-  el('btn-log-toggle').addEventListener('click', () => {
-    const panel = el('log-panel');
-    panel.hidden = !panel.hidden;
   });
 
   buildStickerPanel();

@@ -287,7 +287,20 @@ html, body {
   border: 1px solid rgba(255,255,255,0.4);
 }
 .badge-off { opacity: 0.4; }
-.badge-on { background: var(--accent); color: #1a1200; border-color: var(--accent-dark); }
+.badge-on {
+  background: var(--accent);
+  color: #1a1200;
+  border-color: var(--accent-dark);
+  font-weight: 800;
+  animation: rule-badge-pulse 1.6s ease-in-out infinite;
+}
+@keyframes rule-badge-pulse {
+  0%, 100% { box-shadow: 0 0 0 2px rgba(224,177,58,0.35), 0 0 8px 2px rgba(224,177,58,0.4); }
+  50% { box-shadow: 0 0 0 3px rgba(224,177,58,0.65), 0 0 16px 6px rgba(224,177,58,0.7); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .badge-on { animation: none; box-shadow: 0 0 0 2px rgba(224,177,58,0.5); }
+}
 .badge-timer {
   background: rgba(255,255,255,0.14);
   font-variant-numeric: tabular-nums;
@@ -403,6 +416,23 @@ html, body {
   z-index: 5;
 }
 .kick-btn-opponent:hover { background: var(--danger); }
+/* あがった後の観戦: まだプレイ中の相手の手札を小さいカードで一列表示する
+   (人数が多いと横に長くなるので、はみ出す分は横スクロールにする) */
+.opponents.spectating { margin-bottom: 108px; }
+.opponent .spectate-hand {
+  position: absolute;
+  bottom: -74px;
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  flex-wrap: nowrap;
+  gap: 2px;
+  max-width: 190px;
+  overflow-x: auto;
+  padding-bottom: 2px;
+  z-index: 2;
+}
+.opponent .spectate-hand .playing-card.small { flex-shrink: 0; }
 .opponent .role {
   position: absolute;
   top: -10px;
@@ -488,6 +518,27 @@ html, body {
 .field-pile .playing-card:first-child { margin-left: 0; }
 .field-by { font-size: 11px; color: rgba(255,255,255,0.65); margin-top: 6px; }
 .field-empty { color: rgba(255,255,255,0.55); font-size: 13.5px; letter-spacing: 0.05em; }
+
+.your-turn-banner {
+  margin: 6px 6px 0;
+  padding: 7px 10px;
+  text-align: center;
+  font-size: 14px;
+  font-weight: 800;
+  letter-spacing: 0.06em;
+  color: #1a1200;
+  background: linear-gradient(180deg, #ffe9a8, var(--accent));
+  border-radius: 10px;
+  box-shadow: 0 0 0 2px rgba(224,177,58,0.5), 0 4px 14px rgba(224,177,58,0.35);
+  animation: your-turn-pulse 1.4s ease-in-out infinite;
+}
+@keyframes your-turn-pulse {
+  0%, 100% { transform: scale(1); box-shadow: 0 0 0 2px rgba(224,177,58,0.5), 0 4px 14px rgba(224,177,58,0.35); }
+  50% { transform: scale(1.02); box-shadow: 0 0 0 3px rgba(224,177,58,0.75), 0 4px 20px rgba(224,177,58,0.55); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .your-turn-banner { animation: none; }
+}
 
 @keyframes card-drop-in {
   0% { transform: translateY(-26px) scale(0.85); opacity: 0; }
@@ -614,6 +665,7 @@ html, body {
 
 .hand-cards {
   --hand-card-scale: 1;
+  position: relative;
   display: flex;
   justify-content: flex-start;
   overflow-x: auto;
@@ -656,9 +708,6 @@ html, body {
   --lift: -26px;
   z-index: 99 !important;
   box-shadow: 0 10px 22px rgba(0,0,0,0.55) !important;
-  /* 一番右のカードにはバランス調整用のclip-pathが付いていることがあるが、
-     ホバー時は他のカードと同様に全体を確認できるようにする */
-  clip-path: none !important;
 }
 /* 選択中のカードは「出せる」の薄黄色グロー(下の.playable)と混ざって埋もれないよう、
    はっきり違う強さで示す: 太いアクセント枠 + 常時ちょっとだけ浮かせて周りと高さで差をつける */
@@ -666,7 +715,6 @@ html, body {
   --lift: -14px;
   box-shadow: 0 0 0 4px var(--accent), 0 4px 10px rgba(224,177,58,0.6), 0 10px 20px rgba(0,0,0,0.55);
   z-index: 50;
-  clip-path: none !important;
 }
 .hand-cards .playing-card.selected:hover,
 .hand-cards .playing-card.selected:focus-visible {
@@ -760,18 +808,6 @@ html, body {
   15%, 80% { opacity: 1; }
   100% { opacity: 0; }
 }
-
-.log-panel {
-  background: rgba(0,0,0,0.35);
-  color: #e5e7eb;
-  border-radius: 8px;
-  padding: 8px 10px;
-  margin-top: 8px;
-  max-height: 140px;
-  overflow-y: auto;
-  font-size: 12px;
-}
-.log-panel div { padding: 2px 0; border-bottom: 1px solid rgba(255,255,255,0.06); }
 
 /* ---------- BGM (YouTube Music 風のミニプレイヤー) ---------- */
 .bgm-panel {
@@ -1010,6 +1046,11 @@ html, body {
 .fx-flash.spade3 { background: radial-gradient(circle at 50% 45%, rgba(140,170,220,0.5), transparent 65%); }
 .fx-flash.finish { background: radial-gradient(circle at 50% 45%, rgba(240,220,150,0.45), transparent 65%); }
 .fx-flash.elevenback { background: radial-gradient(circle at 50% 45%, rgba(120,90,220,0.5), transparent 65%); }
+.fx-flash.tenclear { background: radial-gradient(circle at 50% 45%, rgba(80,190,160,0.5), transparent 65%); }
+.fx-flash.fiveskip { background: radial-gradient(circle at 50% 45%, rgba(230,140,60,0.5), transparent 65%); }
+.fx-flash.fourreturn { background: radial-gradient(circle at 50% 45%, rgba(90,170,230,0.5), transparent 65%); }
+.fx-flash.ambulance { background: radial-gradient(circle at 50% 45%, rgba(230,70,70,0.5), transparent 65%); }
+.fx-flash.rokurokubi { background: radial-gradient(circle at 50% 45%, rgba(150,80,190,0.5), transparent 65%); }
 
 .fx-banner-wrap {
   position: fixed;
@@ -1034,6 +1075,11 @@ html, body {
 .fx-banner.spade3 { color: #dbe8ff; font-size: clamp(22px, 9vw, 40px); }
 .fx-banner.finish { color: #fff6d8; font-size: clamp(20px, 8vw, 36px); }
 .fx-banner.elevenback { color: #e0d4ff; font-size: clamp(24px, 10vw, 46px); }
+.fx-banner.tenclear { color: #c7f5e6; font-size: clamp(24px, 10vw, 46px); }
+.fx-banner.fiveskip { color: #ffdcb0; font-size: clamp(24px, 10vw, 46px); }
+.fx-banner.fourreturn { color: #cfe8ff; font-size: clamp(24px, 10vw, 46px); }
+.fx-banner.ambulance { color: #ffd0d0; font-size: clamp(24px, 10vw, 46px); }
+.fx-banner.rokurokubi { color: #ecd6ff; font-size: clamp(24px, 10vw, 46px); }
 
 @keyframes fx-flash-pulse {
   0% { opacity: 0; }
