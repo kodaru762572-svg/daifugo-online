@@ -47,12 +47,14 @@ console.log('=== 大富豪ゲームロジック テスト ===');
 
 check('通常の出し→全員パスで場が流れ、元のプレイヤーに戻る', () => {
   const g = freshGame();
-  g.hands.p1 = [card('H', '5'), card('H', '6')]; // 出した後も手札が残る
+  // 4/5/7/8/10/J は特殊効果(4戻し/5のスキップ/7渡し/8切り/10捨て/イレブンバック)が
+  // 発動するランクなので、このテストでは無関係な6を使う
+  g.hands.p1 = [card('H', '6'), card('H', '9')]; // 出した後も手札が残る
   g.hands.p2 = [card('S', '9')];
   g.hands.p3 = [card('D', '9')];
   g.hands.p4 = [card('C', '9')];
 
-  let r = g.playCards('p1', ['H5']);
+  let r = g.playCards('p1', ['H6']);
   assert.strictEqual(r.ok, true);
   assert.strictEqual(g.order[g.turnIndex], 'p2');
 
@@ -70,12 +72,12 @@ check('通常の出し→全員パスで場が流れ、元のプレイヤーに�
 
 check('リーダーがあがった後、全員パスすると次の人にリードが移る', () => {
   const g = freshGame();
-  g.hands.p1 = [card('H', '5')]; // これ1枚だけ -> 出したらあがる
+  g.hands.p1 = [card('H', '6')]; // これ1枚だけ -> 出したらあがる (6は特殊効果のないランク)
   g.hands.p2 = [card('S', '9')];
   g.hands.p3 = [card('D', '9')];
   g.hands.p4 = [card('C', '9')];
 
-  let r = g.playCards('p1', ['H5']);
+  let r = g.playCards('p1', ['H6']);
   assert.strictEqual(r.ok, true);
   assert.strictEqual(g.finished.includes('p1'), true, 'p1はあがっているはず');
 
@@ -119,20 +121,21 @@ check('革命: 4枚出しで強弱が逆転する', () => {
 
 check('しばり: 同じスートの単騎が2回続くとロックされ、違うスートは出せない', () => {
   const g = freshGame();
-  g.hands.p1 = [card('H', '4')];
-  g.hands.p2 = [card('H', '7')];
-  g.hands.p3 = [card('S', '9')];
+  // 4/7/J は4戻し/7渡し/イレブンバックが発動してしまうので、このテストでは無関係な6を使う
+  g.hands.p1 = [card('H', '6')];
+  g.hands.p2 = [card('H', '9')];
+  g.hands.p3 = [card('S', 'Q')]; // 9より強いランクにして、失敗理由が強さでなくしばりだと分かるようにする
   g.hands.p4 = [card('H', 'J')];
 
-  g.playCards('p1', ['H4']); // 1回目 ハート
+  g.playCards('p1', ['H6']); // 1回目 ハート
   assert.strictEqual(g.lockedSuits, null);
-  g.playCards('p2', ['H7']); // 2回目 ハート -> しばり成立
+  g.playCards('p2', ['H9']); // 2回目 ハート -> しばり成立
   assert.deepStrictEqual(g.lockedSuits, ['H']);
 
-  const r = g.playCards('p3', ['S9']); // スペードは出せないはず
+  const r = g.playCards('p3', ['SQ']); // 9より強いがスペードなので出せないはず
   assert.strictEqual(r.ok, false);
 
-  const r2 = g.playCards('p3'.replace('p3', 'p3'), ['S9']);
+  const r2 = g.playCards('p3'.replace('p3', 'p3'), ['SQ']);
   assert.strictEqual(r2.ok, false);
 });
 
@@ -147,19 +150,20 @@ check('スペ3返し: ジョーカー単騎をスペードの3で返せる', () 
 
 check('あがり順位が正しく記録される (4人)', () => {
   const g = freshGame();
+  // 4/5は4戻し/5のスキップで手番の進み方が変わってしまうので、無関係な3/6/9/Qを使う
   g.hands.p1 = [card('H', '3')];
-  g.hands.p2 = [card('H', '4')];
-  g.hands.p3 = [card('H', '5')];
-  g.hands.p4 = [card('H', '6')];
+  g.hands.p2 = [card('H', '6')];
+  g.hands.p3 = [card('H', '9')];
+  g.hands.p4 = [card('H', 'Q')];
 
   let r = g.playCards('p1', ['H3']);
   assert.strictEqual(r.ok, true);
   assert.strictEqual(g.finished.includes('p1'), true, 'p1はあがったはず');
 
-  r = g.playCards('p2', ['H4']);
+  r = g.playCards('p2', ['H6']);
   assert.strictEqual(g.finished.includes('p2'), true);
 
-  r = g.playCards('p3', ['H5']);
+  r = g.playCards('p3', ['H9']);
   // この時点で p4 だけが残る -> ラウンド終了、p4が自動的に大貧民
   assert.strictEqual(r.roundOver, true);
   assert.deepStrictEqual(g.finished, ['p1', 'p2', 'p3', 'p4']);
@@ -348,6 +352,278 @@ check('ルールOFF: イレブンバックを無効にするとJを出しても�
   const r = g.playCards('p1', ['HJ']);
   assert.strictEqual(r.ok, true);
   assert.strictEqual(g.elevenBack, false, 'イレブンバックOFFなら反転しないはず');
+});
+
+check('5のスキップ: 5を出すと次のプレイヤーの番が飛ばされる', () => {
+  const g = freshGame();
+  g.hands.p1 = [card('H', '5'), card('H', '3')]; // 出した後も手札が残る
+  g.hands.p2 = [card('S', '9')];
+  g.hands.p3 = [card('D', '9')];
+  g.hands.p4 = [card('C', '9')];
+  const r = g.playCards('p1', ['H5']);
+  assert.strictEqual(r.ok, true);
+  assert.ok(g.lastEffects.includes('FIVE_SKIP'));
+  assert.strictEqual(g.order[g.turnIndex], 'p3', 'p2の番はスキップされ、p3の番になるはず');
+});
+
+check('ルールOFF: 5のスキップを無効にすると次のプレイヤーの番になる', () => {
+  const g = freshGame(['p1', 'p2', 'p3', 'p4'], { fiveSkip: false });
+  g.hands.p1 = [card('H', '5'), card('H', '3')];
+  g.hands.p2 = [card('S', '9')];
+  const r = g.playCards('p1', ['H5']);
+  assert.strictEqual(r.ok, true);
+  assert.strictEqual(g.order[g.turnIndex], 'p2', '5のスキップOFFなら通常通り次のプレイヤーの番になるはず');
+});
+
+check('10捨て: 10を出すと場が流れて同じ人が続けて出せる', () => {
+  const g = freshGame();
+  g.hands.p1 = [card('H', '10'), card('H', '3')];
+  g.hands.p2 = [card('S', '9')];
+  const r = g.playCards('p1', ['H10']);
+  assert.strictEqual(r.ok, true);
+  assert.ok(g.lastEffects.includes('TEN_CLEAR'));
+  assert.strictEqual(g.field, null, '10捨て後は場が空になる');
+  assert.strictEqual(g.order[g.turnIndex], 'p1', '10捨て後は同じプレイヤーの番');
+});
+
+check('ルールOFF: 10捨てを無効にすると場は流れない', () => {
+  const g = freshGame(['p1', 'p2', 'p3', 'p4'], { tenClear: false });
+  g.hands.p1 = [card('H', '10'), card('H', '3')];
+  g.hands.p2 = [card('S', '9')];
+  const r = g.playCards('p1', ['H10']);
+  assert.strictEqual(r.ok, true);
+  assert.notStrictEqual(g.field, null, '10捨てOFFなら場は流れないはず');
+  assert.strictEqual(g.order[g.turnIndex], 'p2', '10捨てOFFなら次のプレイヤーの番になるはず');
+});
+
+check('4戻し: 4を出すと順番が1つ前のプレイヤーに戻る', () => {
+  const g = freshGame();
+  g.hands.p1 = [card('H', '4'), card('H', '3')]; // 出した後も手札が残る
+  g.hands.p2 = [card('S', '9')];
+  g.hands.p3 = [card('D', '9')];
+  g.hands.p4 = [card('C', '9')];
+  const r = g.playCards('p1', ['H4']);
+  assert.strictEqual(r.ok, true);
+  assert.ok(g.lastEffects.includes('FOUR_RETURN'));
+  assert.strictEqual(g.order[g.turnIndex], 'p4', '前のプレイヤー(p4)の番に戻るはず');
+});
+
+check('ルールOFF: 4戻しを無効にすると次のプレイヤーの番になる', () => {
+  const g = freshGame(['p1', 'p2', 'p3', 'p4'], { fourReturn: false });
+  g.hands.p1 = [card('H', '4'), card('H', '3')];
+  g.hands.p2 = [card('S', '9')];
+  const r = g.playCards('p1', ['H4']);
+  assert.strictEqual(r.ok, true);
+  assert.strictEqual(g.order[g.turnIndex], 'p2', '4戻しOFFなら通常通り次のプレイヤーの番になるはず');
+});
+
+check('救急車: 9を2枚出すと場が流れて同じ人が続けて出せる', () => {
+  const g = freshGame();
+  g.hands.p1 = [card('H', '9'), card('S', '9'), card('H', '3')];
+  g.hands.p2 = [card('S', '6')];
+  const r = g.playCards('p1', ['H9', 'S9']);
+  assert.strictEqual(r.ok, true);
+  assert.ok(g.lastEffects.includes('AMBULANCE'));
+  assert.strictEqual(g.field, null, '救急車で場が流れるはず');
+  assert.strictEqual(g.order[g.turnIndex], 'p1', '救急車後は同じプレイヤーの番');
+});
+
+check('救急車: 9を3枚出しでは発動しない', () => {
+  const g = freshGame();
+  g.hands.p1 = [card('H', '9'), card('S', '9'), card('D', '9'), card('H', '3')];
+  g.hands.p2 = [card('S', '6')];
+  const r = g.playCards('p1', ['H9', 'S9', 'D9']);
+  assert.strictEqual(r.ok, true);
+  assert.ok(!g.lastEffects.includes('AMBULANCE'), '3枚出しでは救急車は発動しないはず');
+  assert.notStrictEqual(g.field, null, '3枚出しでは場は流れないはず');
+  assert.strictEqual(g.order[g.turnIndex], 'p2');
+});
+
+check('ルールOFF: 救急車を無効にすると9の2枚出しでも場は流れない', () => {
+  const g = freshGame(['p1', 'p2', 'p3', 'p4'], { ambulance: false });
+  g.hands.p1 = [card('H', '9'), card('S', '9')];
+  g.hands.p2 = [card('S', '6')];
+  const r = g.playCards('p1', ['H9', 'S9']);
+  assert.strictEqual(r.ok, true);
+  assert.notStrictEqual(g.field, null, '救急車OFFなら場は流れないはず');
+  assert.strictEqual(g.order[g.turnIndex], 'p2');
+});
+
+check('ろくろ首: 6を2枚出すと場が流れて同じ人が続けて出せる', () => {
+  const g = freshGame();
+  g.hands.p1 = [card('H', '6'), card('S', '6'), card('H', '3')];
+  g.hands.p2 = [card('S', '9')];
+  const r = g.playCards('p1', ['H6', 'S6']);
+  assert.strictEqual(r.ok, true);
+  assert.ok(g.lastEffects.includes('ROKUROKUBI'));
+  assert.strictEqual(g.field, null, 'ろくろ首で場が流れるはず');
+  assert.strictEqual(g.order[g.turnIndex], 'p1', 'ろくろ首後は同じプレイヤーの番');
+});
+
+check('ルールOFF: ろくろ首を無効にすると6の2枚出しでも場は流れない', () => {
+  const g = freshGame(['p1', 'p2', 'p3', 'p4'], { rokurokubi: false });
+  g.hands.p1 = [card('H', '6'), card('S', '6')];
+  g.hands.p2 = [card('S', '9')];
+  const r = g.playCards('p1', ['H6', 'S6']);
+  assert.strictEqual(r.ok, true);
+  assert.notStrictEqual(g.field, null, 'ろくろ首OFFなら場は流れないはず');
+  assert.strictEqual(g.order[g.turnIndex], 'p2');
+});
+
+check('都落ち: 前回大富豪が今回1位を逃すと強制的に大貧民になる', () => {
+  const g = freshGame();
+  g.prevFinishOrder = ['p1', 'p2', 'p3', 'p4']; // 前回: p1が大富豪
+  g.hands.p1 = [card('H', '3'), card('S', '3')];
+  g.hands.p2 = [card('H', '9')];
+  g.hands.p3 = [card('D', '9')];
+  g.hands.p4 = [card('C', '9')];
+  g.turnIndex = g.order.indexOf('p2');
+
+  // p2が1位であがる -> 前回大富豪のp1が都落ちして強制的に脱落する
+  let r = g.playCards('p2', ['H9']);
+  assert.strictEqual(r.ok, true);
+  assert.strictEqual(g.finished[0], 'p2');
+  assert.strictEqual(g.miyakoochiId, 'p1', '前回大富豪のp1が都落ち対象になるはず');
+  assert.strictEqual(g.hands.p1.length, 0, '都落ちで手札を放棄する');
+  assert.ok(g.finished.includes('p1'), 'p1は強制的に脱落してfinishedに入る');
+  assert.strictEqual(g.phase, 'PLAYING', 'まだp3・p4が残っているのでラウンドは続く');
+
+  // p3・p4がパス -> 誰も応答できず場が流れてp3がリードし直す
+  g.pass('p3');
+  g.pass('p4');
+  r = g.playCards('p3', ['D9']);
+  assert.strictEqual(r.ok, true);
+
+  // p3があがると残りp4だけになり、ラウンドが終了する
+  assert.strictEqual(g.phase, 'ROUND_END');
+  // 都落ち対象のp1は、実際にあがった順番(2番目)に関わらず必ず最下位(大貧民)になる
+  assert.strictEqual(g.finished[g.finished.length - 1], 'p1', 'p1は最下位(大貧民)になるはず');
+  assert.strictEqual(g.finished.includes('p4'), true);
+});
+
+check('ルールOFF: 都落ちを無効にすると前回大富豪が1位を逃しても脱落しない', () => {
+  const g = freshGame(['p1', 'p2', 'p3', 'p4'], { miyakoochi: false });
+  g.prevFinishOrder = ['p1', 'p2', 'p3', 'p4'];
+  g.hands.p1 = [card('H', '3'), card('S', '3')];
+  g.hands.p2 = [card('H', '9')];
+  g.turnIndex = g.order.indexOf('p2');
+  const r = g.playCards('p2', ['H9']);
+  assert.strictEqual(r.ok, true);
+  assert.strictEqual(g.miyakoochiId, null, '都落ちOFFなら発動しないはず');
+  assert.strictEqual(g.hands.p1.length, 2, '都落ちOFFならp1の手札はそのまま残るはず');
+  assert.ok(!g.finished.includes('p1'), '都落ちOFFならp1は脱落しないはず');
+});
+
+check('階段: 同じスートの連続した3枚以上をまとめて出せる', () => {
+  const g = freshGame();
+  const combo = g.analyzeCombo([card('H', '5'), card('H', '6'), card('H', '7')]);
+  assert.ok(combo, '階段として成立するはず');
+  assert.strictEqual(combo.kind, 'straight');
+  assert.strictEqual(combo.suit, 'H');
+  assert.strictEqual(combo.lowRank, '5');
+  assert.strictEqual(combo.highRank, '7');
+  assert.strictEqual(combo.count, 3);
+});
+
+check('階段: ジョーカーで途中の欠番を穴埋めできる', () => {
+  const g = freshGame();
+  const combo = g.analyzeCombo([card('H', '5'), joker(), card('H', '7')]);
+  assert.ok(combo, 'ジョーカー穴埋めの階段が成立するはず');
+  assert.strictEqual(combo.kind, 'straight');
+  assert.strictEqual(combo.lowRank, '5');
+  assert.strictEqual(combo.highRank, '7');
+  assert.strictEqual(combo.jokerCount, 1);
+});
+
+check('階段: スートが違うと成立しない', () => {
+  const g = freshGame();
+  const combo = g.analyzeCombo([card('H', '5'), card('S', '6'), card('H', '7')]);
+  assert.strictEqual(combo, null, 'スートが混ざっていると階段は成立しないはず');
+});
+
+check('階段: 同じランクが重複すると成立しない', () => {
+  const g = freshGame();
+  const combo = g.analyzeCombo([card('H', '5'), card('H', '5'), card('H', '7')]);
+  assert.strictEqual(combo, null, '同じランクの重複があると階段は成立しないはず');
+});
+
+check('階段: ジョーカーの枚数が欠番より多い/少ないと成立しない', () => {
+  const g = freshGame();
+  // 5,6,7,8 のうち6と8が欠番(2枚欠け)なのにジョーカーが1枚だけ -> 不成立
+  const combo = g.analyzeCombo([card('H', '5'), joker(), card('H', '8')]);
+  assert.strictEqual(combo, null, '欠番の数とジョーカーの枚数が合わないと不成立のはず');
+});
+
+check('階段: 2枚以下では成立しない', () => {
+  const g = freshGame();
+  const combo = g.analyzeCombo([card('H', '5'), card('H', '6')]);
+  assert.strictEqual(combo, null, '階段は3枚以上必要なはず');
+});
+
+check('ルールOFF: 階段を無効にすると連続した数字を出しても成立しない', () => {
+  const g = freshGame(['p1', 'p2', 'p3', 'p4'], { straight: false });
+  const combo = g.analyzeCombo([card('H', '5'), card('H', '6'), card('H', '7')]);
+  assert.strictEqual(combo, null, '階段ルールOFFなら成立しないはず');
+});
+
+check('階段: 階段より強い階段で返せる (開始ランクの高さで比較)', () => {
+  const g = freshGame();
+  g.hands.p1 = [card('H', '5'), card('H', '6'), card('H', '7')];
+  g.hands.p2 = [card('S', '8'), card('S', '9'), card('S', '10')];
+  let r = g.playCards('p1', ['H5', 'H6', 'H7']);
+  assert.strictEqual(r.ok, true);
+  assert.strictEqual(g.field.kind, 'straight');
+  r = g.playCards('p2', ['S8', 'S9', 'S10']);
+  assert.strictEqual(r.ok, true, '開始ランクがより高い階段は勝てるはず');
+  assert.strictEqual(g.order[g.turnIndex], 'p3');
+});
+
+check('階段: セットでは階段に勝てず、階段ではセットに勝てない', () => {
+  const g = freshGame();
+  g.hands.p1 = [card('H', '5'), card('H', '6'), card('H', '7')];
+  g.hands.p2 = [card('S', 'K'), card('D', 'K'), card('C', 'K')];
+  let r = g.playCards('p1', ['H5', 'H6', 'H7']);
+  assert.strictEqual(r.ok, true);
+  r = g.playCards('p2', ['SK', 'DK', 'CK']);
+  assert.strictEqual(r.ok, false, '階段が場にある時はセットで返せないはず');
+
+  const g2 = freshGame();
+  g2.hands.p1 = [card('H', '5'), card('S', '5'), card('D', '5')];
+  g2.hands.p2 = [card('S', '8'), card('S', '9'), card('S', '10')];
+  r = g2.playCards('p1', ['H5', 'S5', 'D5']);
+  assert.strictEqual(r.ok, true);
+  r = g2.playCards('p2', ['S8', 'S9', 'S10']);
+  assert.strictEqual(r.ok, false, 'セットが場にある時は階段で返せないはず');
+});
+
+check('階段: しばり中でもロック対象と同じスートの階段なら出せる', () => {
+  const g = freshGame();
+  g.hands.p1 = [card('H', '5'), card('H', '6'), card('H', '7')];
+  g.field = {
+    cards: [card('H', '3'), card('H', '4'), card('H', 'Q')],
+    count: 3, kind: 'straight', suit: 'H', lowRank: '3', highRank: 'Q', playerId: 'p2',
+  };
+  g.lockedSuits = ['H'];
+  g.lastSuits = ['H'];
+  g.leaderId = 'p2';
+  g.turnIndex = g.order.indexOf('p1');
+  const r = g.playCards('p1', ['H5', 'H6', 'H7']);
+  assert.strictEqual(r.ok, true, 'ロック対象と同じスートの階段は出せるはず');
+});
+
+check('階段: しばり中にロック対象と違うスートの階段は出せない', () => {
+  const g = freshGame();
+  g.hands.p3 = [card('S', '8'), card('S', '9'), card('S', '10')];
+  g.field = {
+    cards: [card('H', '3'), card('H', '4'), card('H', 'Q')],
+    count: 3, kind: 'straight', suit: 'H', lowRank: '3', highRank: 'Q', playerId: 'p2',
+  };
+  g.lockedSuits = ['H'];
+  g.lastSuits = ['H'];
+  g.leaderId = 'p2';
+  g.turnIndex = g.order.indexOf('p3');
+  const r = g.playCards('p3', ['S8', 'S9', 'S10']);
+  assert.strictEqual(r.ok, false, 'しばり中のスート以外の階段は出せないはず(強さでは勝っているのに弾かれる)');
 });
 
 console.log(`\n${passCount} 件成功`);

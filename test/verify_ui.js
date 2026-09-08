@@ -179,13 +179,17 @@ async function main() {
   } else {
     ok('人間の手番になった');
 
-    // 手札カードごとのランクラベル (children[1].textContent) を取得
-    const handRanks = await page.evaluate(() => {
+    // 手札カードごとのランク・スートを corner (children[0]) から取得する
+    // (children[1]だけだとランクしか分からず、階段ルール導入後の「同じスートか」判定に使えないため)
+    const handInfo = await page.evaluate(() => {
       return Array.from(document.querySelectorAll('#hand-cards .playing-card')).map((el) => {
-        return el.children[1] ? el.children[1].textContent.trim() : '';
+        if (el.classList.contains('joker')) return { rank: 'JOKER', suit: null };
+        const corner = el.children[0] ? el.children[0].textContent.trim() : '';
+        return { rank: corner.slice(0, -1), suit: corner.slice(-1) };
       });
     });
-    ok(`手札: ${handRanks.join(',')}`);
+    const handRanks = handInfo.map((c) => c.rank);
+    ok(`手札: ${handInfo.map((c) => `${c.rank}${c.suit || ''}`).join(',')}`);
 
     // 手札が横スクロール無しで1画面に収まっているか(スライドしないと分からない状態になっていないか)を確認
     const handFit = await page.evaluate(() => {
@@ -212,8 +216,12 @@ async function main() {
     if (selectedAfterOne !== 1) fail(`1枚目選択後のselected数が1でない (${selectedAfterOne})`);
     else ok('カード選択でselectedクラスが1件付与される');
 
-    // 異なるランクの2枚目を探してクリック -> 追加されないことを確認
-    const diffIdx = handRanks.findIndex((r, idx) => idx !== 0 && r !== handRanks[0] && r !== 'JOKER');
+    // ランクもスートも異なる(=束としても階段としても絶対に組み合わせられない)2枚目を探してクリック
+    // -> 追加されないことを確認。(階段ルール導入後は「ランクが違う」だけでは、同じスートなら
+    //  階段の候補として正当に追加できてしまうケースがあるため、スートも異なるものを選ぶ)
+    const diffIdx = handInfo.findIndex(
+      (c, idx) => idx !== 0 && c.rank !== 'JOKER' && c.rank !== handInfo[0].rank && c.suit !== handInfo[0].suit
+    );
     if (diffIdx >= 0) {
       await page.evaluate((idx) => {
         document.querySelectorAll('#hand-cards .playing-card')[idx].dispatchEvent(new MouseEvent('click', { bubbles: true }));
@@ -221,13 +229,57 @@ async function main() {
       await page.waitForTimeout(150);
       const selectedCount = await page.evaluate(() => document.querySelectorAll('#hand-cards .playing-card.selected').length);
       if (selectedCount !== 1) {
-        fail(`異なるランクのカードを追加できてしまった (selected=${selectedCount})`);
+        fail(`ランク・スートとも異なるカードを追加できてしまった (selected=${selectedCount})`);
       } else {
-        ok('異なるランクのカードは複数選択に追加されない(select-lockedで弾かれる)');
+        ok('ランク・スートとも異なるカードは複数選択に追加されない(select-lockedで弾かれる)');
       }
       await page.screenshot({ path: `${OUT}/02_diffrank_blocked.png` });
     } else {
-      ok('(異なるランクの候補が手札になかったためこのチェックはスキップ)');
+      ok('(ランク・スートとも異なる候補が手札になかったためこのチェックはスキップ)');
+    }
+
+    // 選択をリセットし、今度は「同じスートで違うランク」の2枚目を選ぶ -> 階段の候補として
+    // 正当に追加できる(ジョーカーと組み合わせても光る/選べる、というユーザー要件の一部)ことを確認。
+    await page.evaluate(() => {
+      document.querySelectorAll('#hand-cards .playing-card.selected').forEach((el) => {
+        el.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+      });
+    });
+    await page.waitForTimeout(150);
+    // 階段(3枚以上)を試せるのは「場が空(リード番)」か「場が3枚以上」の時だけ。
+    // 場が単騎(1枚)の時は、そもそもどんな組み合わせでも2枚目を追加できない(必要枚数=1のため)ので、
+    // その状態でこのチェックをしても無意味(かつ誤ってFAIL扱いになってしまう)。
+    const fieldCardCount = await page.evaluate(() => {
+      const empty = document.getElementById('field-empty');
+      if (!empty.hidden) return 0;
+      return document.querySelectorAll('#field-cards .playing-card').length;
+    });
+    const straightIdx = handInfo.findIndex(
+      (c, idx) => idx !== 0 && c.rank !== 'JOKER' && c.suit === handInfo[0].suit && c.rank !== handInfo[0].rank
+    );
+    if (handInfo[0].rank !== 'JOKER' && straightIdx >= 0 && (fieldCardCount === 0 || fieldCardCount >= 3)) {
+      await page.evaluate(() => {
+        document.querySelectorAll('#hand-cards .playing-card')[0].dispatchEvent(new MouseEvent('click', { bubbles: true }));
+      });
+      await page.evaluate((idx) => {
+        document.querySelectorAll('#hand-cards .playing-card')[idx].dispatchEvent(new MouseEvent('click', { bubbles: true }));
+      }, straightIdx);
+      await page.waitForTimeout(150);
+      const selectedCount2 = await page.evaluate(() => document.querySelectorAll('#hand-cards .playing-card.selected').length);
+      if (selectedCount2 !== 2) {
+        fail(`同じスートの別ランク(階段の候補)を追加できなかった (selected=${selectedCount2})`);
+      } else {
+        ok('同じスートの別ランクは階段の候補として選択に追加できる');
+      }
+      // 選択をリセット
+      await page.evaluate(() => {
+        document.querySelectorAll('#hand-cards .playing-card.selected').forEach((el) => {
+          el.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+        });
+      });
+      await page.waitForTimeout(150);
+    } else {
+      ok('(同じスートの別ランクの候補が無いか、場が単騎で階段を試せない状況だったためこのチェックはスキップ)');
     }
 
     // 選択をリセットし、実際に出せる(playableな)カードを選び直す
