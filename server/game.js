@@ -10,6 +10,10 @@
  *  - ジョーカー (最強の1枚として出せる。スペードの3で返せる=スペ3返し)
  *  - あがり順位 (大富豪・富豪・平民・貧民・大貧民)
  *  - 前回順位によるカード交換 (大富豪⇔大貧民は2枚、富豪⇔貧民は1枚)
+ *  - 5のスキップ / 10捨て / 4戻し
+ *  - 救急車 (9の2枚出しで場が流れる) / ろくろ首 (6の2枚出しで場が流れる)
+ *  - 都落ち (前回の大富豪が今回1位を逃すと強制的に大貧民になる)
+ *  - 階段 (同じスートの連続した数字を3枚以上まとめて出せる)
  */
 
 const SUITS = ['S', 'H', 'D', 'C']; // スペード・ハート・ダイヤ・クラブ
@@ -26,6 +30,13 @@ const DEFAULT_RULES = {
   cardExchange: true, // 次ラウンドのカード交換
   sevenGive: true, // 7渡し (7を出した枚数分、好きな相手にカードを渡す)
   elevenBack: true, // イレブンバック (Jを出すとそのトリック限定で強さが逆転)
+  fiveSkip: true, // 5のスキップ (5を出すと次のプレイヤーの番を飛ばす)
+  tenClear: true, // 10捨て (10を出すと場が流れる。8切りと同様に続けて出せる)
+  fourReturn: true, // 4戻し (4を出すと順番が1つ前のプレイヤーに戻る)
+  ambulance: true, // 救急車 (9の2枚出しで場が流れる。3枚/4枚出しでは発動しない)
+  rokurokubi: true, // ろくろ首 (6の2枚出しで場が流れる)
+  miyakoochi: true, // 都落ち (前回の大富豪が今回1位を逃すと、その場で脱落し次回大貧民が確定)
+  straight: true, // 階段 (同じスートの連続した数字を3枚以上まとめて出せる。ジョーカーで穴埋め可)
 };
 
 function normalizeRules(rules) {
@@ -106,6 +117,8 @@ class DaifugoGame {
     this.lastEffectBy = null;
     this.elevenBack = false; // イレブンバック: このトリック限定の強さ反転 (場が流れるとリセット)
     this.pendingSevenGive = null; // 7渡し待ち: {playerId, count, candidates, pendingClearField}
+    this.miyakoochiId = null; // 都落ち: このラウンドで発動済みなら対象プレイヤーのid (1ラウンド1回まで)
+    this.prevFinishOrder = null; // 前ラウンドのあがり順 (都落り・カード交換の判定に使う)
   }
 
   // このトリックで実際に使う「革命状態」(通常の革命 と イレブンバック の合成)
@@ -139,6 +152,7 @@ class DaifugoGame {
     this.lastSuits = null;
     this.passed = new Set();
     this.log = [];
+    this.miyakoochiId = null;
 
     const deck = shuffle(makeDeck(this.rules.useJoker));
     const activeIds = this.order.filter((id) => !this.disconnected.has(id));
@@ -283,19 +297,57 @@ class DaifugoGame {
   // 手札の組み合わせ判定
   // ----------------------------------------------------------------
   // cards: 選択されたカードオブジェクトの配列
+  // 戻り値の kind: 'set' (同じランクの束、ジョーカーは穴埋め自由) または
+  //               'straight' (階段: 同じスートの連続した数字、ジョーカーで途中の穴埋め可)
   analyzeCombo(cards) {
     if (!cards || cards.length === 0) return null;
     const nonJokers = cards.filter((c) => !c.joker);
     const jokerCount = cards.length - nonJokers.length;
     if (nonJokers.length === 0) {
       // 全部ジョーカー (1枚のみ想定)
-      if (cards.length === 1) return { rank: 'JOKER', count: 1, suits: [] };
+      if (cards.length === 1) return { kind: 'set', rank: 'JOKER', count: 1, suits: [], jokerCount: 1 };
       return null;
     }
+    // まず「同じランクの束」として成立するか確認する (1枚だけの実カード+ジョーカー複数、
+    // という組み合わせもここに含まれる。階段と紛らわしいケースだが、大富豪の伝統的な
+    // 挙動として「同ランクの束」を優先する)
     const rank = nonJokers[0].rank;
-    if (!nonJokers.every((c) => c.rank === rank)) return null; // ランク不一致
-    const suits = Array.from(new Set(nonJokers.map((c) => c.suit))).sort();
-    return { rank, count: cards.length, suits, jokerCount };
+    if (nonJokers.every((c) => c.rank === rank)) {
+      const suits = Array.from(new Set(nonJokers.map((c) => c.suit))).sort();
+      return { kind: 'set', rank, count: cards.length, suits, jokerCount };
+    }
+
+    // 階段: 同じスートで連続した数字が3枚以上 (ジョーカーは途中の欠番の穴埋めに使える)
+    if (this.rules.straight && cards.length >= 3) {
+      const suit = nonJokers[0].suit;
+      if (!nonJokers.every((c) => c.suit === suit)) return null; // スート不一致
+      const idxs = nonJokers.map((c) => RANK_ORDER.indexOf(c.rank));
+      if (idxs.some((i) => i < 0)) return null;
+      if (new Set(idxs).size !== idxs.length) return null; // 同じランクが2枚以上あると階段にならない
+      const lowIdx = Math.min(...idxs);
+      const highIdx = Math.max(...idxs);
+      const span = highIdx - lowIdx + 1;
+      if (span !== cards.length) return null; // 欠番の数がジョーカーの枚数とぴったり一致しないと成立しない
+      return {
+        kind: 'straight',
+        suit,
+        lowRank: RANK_ORDER[lowIdx],
+        highRank: RANK_ORDER[highIdx],
+        count: cards.length,
+        suits: [suit],
+        jokerCount,
+      };
+    }
+
+    return null;
+  }
+
+  // 場に出ている/出そうとしている組み合わせの「強さ」を数値化する。
+  // 'set' はランクそのもの、'straight' は一番弱いカード(lowRank)で比較する
+  // (階段同士は同じ枚数のときだけ比較でき、開始ランクが高い方が強い)。
+  comboStrength(combo, revolution) {
+    if (combo.kind === 'straight') return strengthOf(combo.lowRank, revolution);
+    return strengthOf(combo.rank, revolution);
   }
 
   suitsEqual(a, b) {
@@ -319,7 +371,14 @@ class DaifugoGame {
     }
 
     const combo = this.analyzeCombo(cards);
-    if (!combo) return { ok: false, error: '同じランドのカードを組み合わせて出してください。' };
+    if (!combo) {
+      return {
+        ok: false,
+        error: this.rules.straight
+          ? '同じランクの束か、同じスートの連続した数字(3枚以上)で出してください。'
+          : '同じランクのカードを組み合わせて出してください。',
+      };
+    }
 
     // スペ3返し: 場がジョーカー単騎の時、スペード3の単騎だけは特別に勝てる
     const isSpade3Return =
@@ -327,6 +386,7 @@ class DaifugoGame {
       this.field &&
       this.field.rank === 'JOKER' &&
       this.field.count === 1 &&
+      combo.kind === 'set' &&
       combo.count === 1 &&
       cards[0].suit === 'S' &&
       cards[0].rank === '3';
@@ -336,9 +396,15 @@ class DaifugoGame {
         return { ok: false, error: `場と同じ${this.field.count}枚で出してください。` };
       }
       if (!isSpade3Return) {
+        if (combo.kind !== this.field.kind) {
+          return {
+            ok: false,
+            error: this.field.kind === 'straight' ? '階段には階段で返してください。' : '同じランクの束で返してください。',
+          };
+        }
         const rev = this.effectiveRevolution();
-        const fieldStrength = strengthOf(this.field.rank, rev);
-        const myStrength = strengthOf(combo.rank, rev);
+        const fieldStrength = this.comboStrength(this.field, rev);
+        const myStrength = this.comboStrength(combo, rev);
         if (myStrength <= fieldStrength) {
           return { ok: false, error: '場より強いカードを出してください。' };
         }
@@ -362,10 +428,16 @@ class DaifugoGame {
     // 手札から取り除く
     this.hands[playerId] = this.hands[playerId].filter((c) => !cardIds.includes(c.id));
 
-    const isEight = this.rules.eightCut && combo.rank === '8';
-    const isRevolution = this.rules.revolution && combo.count >= 4;
-    const isElevenBack = this.rules.elevenBack && combo.rank === 'J';
-    const isSevenGive = this.rules.sevenGive && combo.rank === '7';
+    const isSet = combo.kind === 'set';
+    const isEight = isSet && this.rules.eightCut && combo.rank === '8';
+    const isTenClear = isSet && this.rules.tenClear && combo.rank === '10';
+    const isRevolution = isSet && this.rules.revolution && combo.count >= 4;
+    const isElevenBack = isSet && this.rules.elevenBack && combo.rank === 'J';
+    const isSevenGive = isSet && this.rules.sevenGive && combo.rank === '7';
+    const isFiveSkip = isSet && this.rules.fiveSkip && combo.rank === '5';
+    const isFourReturn = isSet && this.rules.fourReturn && combo.rank === '4';
+    const isAmbulance = isSet && this.rules.ambulance && combo.rank === '9' && combo.count === 2;
+    const isRokurokubi = isSet && this.rules.rokurokubi && combo.rank === '6' && combo.count === 2;
 
     this.addLog(
       `${this.playerName(playerId)} が ${cards.map((c) => this.cardLabel(c)).join(' ')} を出しました。`
@@ -391,7 +463,16 @@ class DaifugoGame {
       this.lastSuits = combo.suits;
     }
 
-    this.field = { cards, count: combo.count, rank: combo.rank, playerId };
+    this.field = {
+      cards,
+      count: combo.count,
+      kind: combo.kind,
+      rank: combo.kind === 'set' ? combo.rank : null,
+      suit: combo.kind === 'straight' ? combo.suit : null,
+      lowRank: combo.kind === 'straight' ? combo.lowRank : null,
+      highRank: combo.kind === 'straight' ? combo.highRank : null,
+      playerId,
+    };
     this.leaderId = playerId;
 
     let justFinished = false;
@@ -399,6 +480,7 @@ class DaifugoGame {
       this.finished.push(playerId);
       justFinished = true;
       this.addLog(`${this.playerName(playerId)} が上がりました! (${this.finished.length}位)`);
+      this.checkMiyakoochi();
     }
 
     this.seq += 1;
@@ -406,6 +488,11 @@ class DaifugoGame {
     if (isRevolution) effects.push('REVOLUTION');
     if (isElevenBack) effects.push('ELEVEN_BACK');
     if (isEight) effects.push('EIGHT_CUT');
+    if (isTenClear) effects.push('TEN_CLEAR');
+    if (isFiveSkip) effects.push('FIVE_SKIP');
+    if (isFourReturn) effects.push('FOUR_RETURN');
+    if (isAmbulance) effects.push('AMBULANCE');
+    if (isRokurokubi) effects.push('ROKUROKUBI');
     if (isSpade3Return) effects.push('SPADE3_RETURN');
     if (justFinished) effects.push('FINISH');
     this.lastEffects = effects;
@@ -414,7 +501,7 @@ class DaifugoGame {
     const roundOver = this.checkRoundOver();
     if (roundOver) return { ok: true, roundOver: true };
 
-    const pendingClearField = isEight || isSpade3Return;
+    const pendingClearField = isEight || isTenClear || isSpade3Return || isAmbulance || isRokurokubi;
 
     // 7渡し: まだ手札が残っていれば、進行を一旦止めて渡し先とカードを選んでもらう
     if (isSevenGive && !justFinished) {
@@ -431,10 +518,18 @@ class DaifugoGame {
 
     if (pendingClearField) {
       if (isSpade3Return) this.addLog('スペードの3返し!場が流れます。');
+      else if (isTenClear) this.addLog('10捨て!場が流れます。');
+      else if (isAmbulance) this.addLog('救急車!場が流れます。');
+      else if (isRokurokubi) this.addLog('ろくろ首!場が流れます。');
       else this.addLog('8切り!場が流れます。');
       this.clearField(justFinished ? null : playerId);
     } else {
-      this.advanceTurn(playerId);
+      const advanceOpts = {};
+      if (isFourReturn) advanceOpts.direction = -1;
+      if (isFiveSkip) advanceOpts.extraSkip = 1;
+      if (isFourReturn) this.addLog('4戻し!順番が前のプレイヤーに戻ります。');
+      if (isFiveSkip) this.addLog('5のスキップ!次のプレイヤーの番を飛ばします。');
+      this.advanceTurn(playerId, advanceOpts);
     }
 
     return { ok: true };
@@ -473,6 +568,7 @@ class DaifugoGame {
       this.finished.push(playerId);
       justFinished = true;
       this.addLog(`${this.playerName(playerId)} が上がりました! (${this.finished.length}位)`);
+      this.checkMiyakoochi();
       this.seq += 1;
       this.lastEffects = this.lastEffects.includes('FINISH') ? this.lastEffects : this.lastEffects.concat('FINISH');
       this.lastEffectBy = playerId;
@@ -520,21 +616,24 @@ class DaifugoGame {
     }
   }
 
-  nextActiveFrom(startIdx) {
+  nextActiveFrom(startIdx, direction = 1) {
     const n = this.order.length;
     for (let step = 1; step <= n; step++) {
-      const idx = (startIdx + step) % n;
+      const idx = (((startIdx + step * direction) % n) + n) % n;
       const id = this.order[idx];
       if (!this.finished.includes(id) && !this.disconnected.has(id)) return id;
     }
     return null;
   }
 
-  advanceTurn(fromPlayerId) {
+  // direction: 1=通常(時計回り) / -1=4戻し用の逆回り
+  // extraSkip: 5のスキップ用。0より大きい場合、その人数分だけさらに次へ飛ばす
+  advanceTurn(fromPlayerId, opts = {}) {
+    const { direction = 1, extraSkip = 0 } = opts;
     const fromIdx = this.order.indexOf(fromPlayerId);
     const n = this.order.length;
     for (let step = 1; step <= n; step++) {
-      const idx = (fromIdx + step) % n;
+      const idx = (((fromIdx + step * direction) % n) + n) % n;
       const id = this.order[idx];
       if (this.finished.includes(id) || this.disconnected.has(id)) continue;
       if (this.passed.has(id)) continue;
@@ -544,16 +643,45 @@ class DaifugoGame {
         return;
       }
       this.turnIndex = idx;
+      if (extraSkip > 0) {
+        this.addLog(`${this.playerName(id)} の番はスキップされました。`);
+        this.advanceTurn(id, { direction, extraSkip: extraSkip - 1 });
+        return;
+      }
       return;
     }
     // 誰も応答できない (リーダーがあがった/切断した等) -> 場が流れる
     this.clearField(this.leaderId);
   }
 
+  // 都落ち: 前回大富豪だった人が、自分以外の誰かに1位を取られた瞬間、
+  // その場で手札を放棄して脱落する(次ラウンドで必ず大貧民になる)。
+  // 1ラウンドにつき1回だけ判定する。
+  checkMiyakoochi() {
+    if (!this.rules.miyakoochi || this.miyakoochiId) return;
+    const prevDaifugoId = this.prevFinishOrder && this.prevFinishOrder[0];
+    if (!prevDaifugoId) return;
+    if (this.finished.length !== 1) return; // 「1位が決まった瞬間」だけを見る
+    if (this.finished[0] === prevDaifugoId) return; // 本人が1位なら都落ちしない
+    if (!this.order.includes(prevDaifugoId) || this.disconnected.has(prevDaifugoId)) return;
+    if (this.finished.includes(prevDaifugoId)) return; // 既にあがっている(あり得ないが念のため)
+
+    this.miyakoochiId = prevDaifugoId;
+    this.hands[prevDaifugoId] = [];
+    this.finished.push(prevDaifugoId);
+    this.addLog(
+      `${this.playerName(prevDaifugoId)} は前回大富豪でしたが1位を逃したため「都落ち」!強制的に大貧民が確定しました。`
+    );
+  }
+
   checkRoundOver() {
     const remaining = this.order.filter((id) => !this.finished.includes(id) && !this.disconnected.has(id));
     if (remaining.length <= 1) {
       if (remaining.length === 1) this.finished.push(remaining[0]);
+      // 都落ち対象者は、あがった順番に関わらず必ず最下位(大貧民)になるよう最後尾に回す
+      if (this.miyakoochiId && this.finished.includes(this.miyakoochiId)) {
+        this.finished = this.finished.filter((id) => id !== this.miyakoochiId).concat(this.miyakoochiId);
+      }
       this.phase = 'ROUND_END';
       this.prevFinishOrder = this.finished.slice();
       const roles = roleNamesFor(this.finished.length);
@@ -579,6 +707,8 @@ class DaifugoGame {
   // ----------------------------------------------------------------
   getStateFor(viewerId) {
     const roles = this.prevRoles || {};
+    // 自分があがった後は、まだプレイ中の他のプレイヤーの手札を観戦できるようにする
+    const iAmSpectating = this.finished.includes(viewerId);
     return {
       round: this.round,
       phase: this.phase,
@@ -589,7 +719,11 @@ class DaifugoGame {
         ? {
             cards: this.field.cards.map((c) => ({ id: c.id, suit: c.suit, rank: c.rank, joker: c.joker, label: this.cardLabel(c) })),
             count: this.field.count,
+            kind: this.field.kind,
             rank: this.field.rank,
+            suit: this.field.suit,
+            lowRank: this.field.lowRank,
+            highRank: this.field.highRank,
             playerId: this.field.playerId,
             playerName: this.playerName(this.field.playerId),
           }
@@ -609,17 +743,24 @@ class DaifugoGame {
             candidates: this.pendingSevenGive.candidates.map((id) => ({ id, name: this.playerName(id) })),
           }
         : null,
-      players: this.players.map((p) => ({
-        id: p.id,
-        name: p.name,
-        avatar: p.avatar || null,
-        handCount: (this.hands[p.id] || []).length,
-        finished: this.finished.includes(p.id),
-        connected: !this.disconnected.has(p.id),
-        role: roles[p.id] || null,
-      })),
+      players: this.players.map((p) => {
+        const isFinished = this.finished.includes(p.id);
+        return {
+          id: p.id,
+          name: p.name,
+          avatar: p.avatar || null,
+          handCount: (this.hands[p.id] || []).length,
+          finished: isFinished,
+          connected: !this.disconnected.has(p.id),
+          role: roles[p.id] || null,
+          // あがった人だけ、まだあがっていない他プレイヤーの手札を観戦できる
+          hand:
+            iAmSpectating && p.id !== viewerId && !isFinished
+              ? (this.hands[p.id] || []).map((c) => ({ id: c.id, suit: c.suit, rank: c.rank, joker: c.joker, label: this.cardLabel(c) }))
+              : undefined,
+        };
+      }),
       myHand: (this.hands[viewerId] || []).map((c) => ({ id: c.id, suit: c.suit, rank: c.rank, joker: c.joker, label: this.cardLabel(c) })),
-      log: this.log.slice(-40),
       rules: this.rules,
       seq: this.seq,
       effects: this.lastEffects,
